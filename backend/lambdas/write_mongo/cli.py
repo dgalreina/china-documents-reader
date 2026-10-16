@@ -1,0 +1,50 @@
+"""Escribe en MongoDB el resultado de embed_label.
+
+  python -m lambdas.embed_label.cli libro.pdf --limit 20 --out salida.json --with-vectors
+  python -m lambdas.write_mongo.cli salida.json --source mi-libro --target dev            (dry-run)
+  python -m lambdas.write_mongo.cli salida.json --source mi-libro --target dev --write --ensure-index
+
+Sin --write no se escribe nada. Con --target prod --write se pide escribir el nombre de la base.
+"""
+
+import argparse
+import json
+from pathlib import Path
+
+from dotenv import find_dotenv, load_dotenv
+
+from .store import ContractError, resolve_target, write_chunks
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Guarda los chunks en book_chunks (upsert por source+chunkIndex).")
+    parser.add_argument("input", type=Path, help="JSON de embed_label.cli generado con --with-vectors")
+    parser.add_argument("--source", required=True, help="slug del documento, p. ej. gernet-mundo-chino")
+    parser.add_argument("--target", required=True, choices=["dev", "prod"])
+    parser.add_argument("--write", action="store_true", help="escribe de verdad (sin esto es dry-run)")
+    parser.add_argument("--ensure-index", action="store_true", help="solo dev: crea los índices en la base de pruebas")
+    args = parser.parse_args()
+
+    load_dotenv(find_dotenv(usecwd=True))
+    try:
+        target = resolve_target(args.target)
+        docs = json.loads(args.input.read_text(encoding="utf-8"))["ready"]
+        if args.write and target.name == "prod":
+            typed = input(f"Vas a ESCRIBIR en producción (base '{target.db_name}'). Escribe el nombre de la base para confirmar: ")
+            if typed.strip() != target.db_name:
+                print("No coincide. Cancelado, no se ha escrito nada.")
+                return
+        report = write_chunks(target, args.source, docs, write=args.write, ensure_index=args.ensure_index)
+    except ContractError as err:
+        print(f"ERROR de contrato, no se ha escrito nada: {err}")
+        raise SystemExit(1)
+
+    modo = "DRY-RUN (no se ha escrito nada)" if report.dry_run else "ESCRITO"
+    print(f"{modo} -> {report.target} / base '{report.db_name}' / source '{report.source}'")
+    print(f"Chunks: {report.total} | ya existían (se reemplazarían): {report.existing} | nuevos: {report.total - report.existing}")
+    if not report.dry_run:
+        print(f"Operaciones aplicadas: {report.written}")
+
+
+if __name__ == "__main__":
+    main()

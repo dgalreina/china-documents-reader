@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.pdf
+cdk.out/
+node_modules/
+dist/
+.pytest_cache/
+*.log
+.DS_Store
