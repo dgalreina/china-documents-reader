@@ -9,7 +9,7 @@ Protecciones (ver "Pruebas y base de datos de producción" en CLAUDE.md):
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pymongo import GEOSPHERE, MongoClient, ReplaceOne
 from pymongo.errors import BulkWriteError, OperationFailure
@@ -128,6 +128,7 @@ class WriteReport:
     existing: int  # ya existían (se reemplazarían)
     written: int = 0
     orphans: int = 0  # chunkIndex de ese source que ya no existen y se borrarían/borraron (--replace-source)
+    duplicates: list = field(default_factory=list)  # hitos que ya existían (con otras palabras) y no se escriben
 
 
 def write_chunks(
@@ -249,16 +250,54 @@ def build_hito_operations(source: str, hitos: list[dict]) -> list[ReplaceOne]:
     return [ReplaceOne({"id": hito["id"], "origen": ORIGIN}, hito, upsert=True) for hito in clean]
 
 
+HITO_NEIGHBOR_FIELDS = {"_id": 0, "id": 1, "titulo": 1, "titulo_en": 1, "descripcion": 1, "descripcion_en": 1, "año": 1, "fuente": 1, "location": 1}
+
+
+def mongo_neighbors(collection, source: str, replace_source: bool):
+    """Función que devuelve los hitos ya guardados cerca (en año y lugar) de uno dado. Solo lectura."""
+    from .dedupe import RADIUS_KM, YEAR_WINDOW, is_close
+
+    def neighbors(hito: dict) -> list[dict]:
+        lng, lat = hito["location"]["coordinates"]
+        query = {"año": {"$gte": hito["año"] - YEAR_WINDOW, "$lte": hito["año"] + YEAR_WINDOW}, "id": {"$ne": hito["id"]}}
+        if replace_source:
+            # Los de este mismo libro se van a reemplazar: compararse con ellos marcaría todo como duplicado.
+            query["$nor"] = [{"origen": ORIGIN, "fuente": source}]
+        try:
+            near = {"location": {"$near": {"$geometry": {"type": "Point", "coordinates": [lng, lat]}, "$maxDistance": RADIUS_KM * 1000}}}
+            return list(collection.find({**query, **near}, HITO_NEIGHBOR_FIELDS).limit(10))
+        except OperationFailure:
+            # Sin índice 2dsphere (base nueva): se filtra por año en Mongo y por distancia aquí.
+            return [h for h in collection.find(query, HITO_NEIGHBOR_FIELDS).limit(200) if h.get("location") and is_close(hito, h)]
+
+    return neighbors
+
+
 def write_hitos(
-    target: Target, source: str, hitos: list[dict], write: bool = False, ensure_index: bool = False, replace_source: bool = False
+    target: Target,
+    source: str,
+    hitos: list[dict],
+    write: bool = False,
+    ensure_index: bool = False,
+    replace_source: bool = False,
+    dedupe: bool = True,
+    client=None,
 ) -> WriteReport:
-    operations = build_hito_operations(source, hitos)  # valida antes de abrir ninguna conexión
-    client = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
+    build_hito_operations(source, hitos)  # valida TODO antes de abrir ninguna conexión
+    mongo = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
     try:
-        collection = client[target.db_name][HITOS_COLLECTION]
+        collection = mongo[target.db_name][HITOS_COLLECTION]
+        duplicates: list[dict] = []
+        if dedupe:
+            # Guardar solo lo nuevo: se compara con lo que YA hay en la base de destino (y con la propia tanda).
+            from ..embed_label.pipeline import make_client
+            from .dedupe import filter_new
+
+            hitos, duplicates = filter_new(hitos, mongo_neighbors(collection, source, replace_source), client or make_client())
+        operations = build_hito_operations(source, hitos) if hitos else []
         ids = [h["id"] for h in hitos]
         existing = collection.count_documents({"id": {"$in": ids}, "origen": ORIGIN})
-        report = WriteReport(target.name, target.db_name, source, not write, len(hitos), existing)
+        report = WriteReport(target.name, target.db_name, source, not write, len(hitos), existing, duplicates=duplicates)
         orphan_filter = {"origen": ORIGIN, "fuente": source, "id": {"$nin": ids}}
         if replace_source:
             report.orphans = collection.count_documents(orphan_filter)
@@ -279,4 +318,4 @@ def write_hitos(
                 collection.delete_many(orphan_filter)
         return report
     finally:
-        client.close()
+        mongo.close()

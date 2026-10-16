@@ -99,6 +99,8 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   en Luoyi, 'conquista de Shang' en Xi'an). Id verificado: 1249/1259 de china-history coinciden (los otros 10 se editaron a mano).
   `write_mongo --kind hitos`: ReplaceOne por (id, origen='china-documents-reader'), nunca pisa ni borra un hito ajeno.
   Prueba (Oxford Handbook, PDF 376-395, Zhou Occidental): 3 hitos fiables de 38 chunks; dev tiene 3. Rendimiento bajo a proposito.
+- `write_mongo --kind hitos` guarda solo lo nuevo (ver Ideas -> dedupe). Probado en dev con dry-run: 2 duplicados descartados
+  (0.87 y 0.94) y 1 nuevo; con `--replace-source`, reproceso sin marcar nada como duplicado de si mismo. 90 tests.
 - Pendiente, en este orden: `presign` → infra CDK →
   UI de subida/hitos → agente `ask` → CI/CD. Ver `README.md` y `backend/README.md`.
 
@@ -116,9 +118,13 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
 
 - **Chino (`_zh`) no es determinista:** en dos ejecuciones el mismo nombre propio salio bien (发) y mal (法, 'ley'). Los lugares salen bien
   cuando el texto original trae los caracteres (el Oxford los incluye entre parentesis). Revisar `_zh` de nombres de personas.
-- **Reprocesar hitos:** el `id` depende del titulo/lugar que genera el modelo, que varia entre ejecuciones, asi que reprocesar un
-  libro crea ids nuevos y deja los viejos huerfanos. Para limpiar, un `--replace-source` de hitos debe borrar SOLO documentos con
-  una marca propia (p. ej. `origen: "china-documents-reader"`) Y `fuente` del libro, para no tocar nunca los 1259 de china-history.
+- **Reprocesar hitos / libros que repiten hechos (resuelto en `write_mongo/dedupe.py`):** el `id` depende del titulo que escribe el
+  modelo y varia entre ejecuciones, asi que no sirve para detectar repetidos. Se guarda SOLO LO NUEVO comparando con la base a la que se
+  escribe (dev hoy, produccion cuando se promueva; en produccion vera los 1259 de china-history): candidatos con anio +-15 y <25 km;
+  parecido por embeddings del texto en ingles (>=0.85 duplicado, <0.5 nuevo); zona gris -> un modelo juzga si es el mismo hecho.
+  Calibrado con datos reales: el mismo hecho puntua 0.62-0.95 y hechos distintos 0.31-0.60 (se solapan, de ahi el juez). Con
+  `--replace-source` los hitos viejos del mismo libro NO cuentan como existentes (si no, todo seria duplicado de la tanda anterior).
+  `--keep-duplicates` lo desactiva. Los chunks NO se deduplican: que dos libros cuenten lo mismo es lo que quiere la busqueda y las citas.
 - **Mas cobertura de ubicacion:** ampliar `yacimientos.json` de china-history con los sitios que salgan sin resolver, o probar
   otra fuente (p. ej. Nominatim/OSM) si Wikidata se queda corto en otros libros.
 - **Para china-history (verificado en dev):** si prefiltran por caja geografica con un `$and` simple, los chunks SIN ubicacion
