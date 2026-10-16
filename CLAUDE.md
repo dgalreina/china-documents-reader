@@ -93,7 +93,13 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
 - `write_mongo` escribe con **ReplaceOne** (documento entero), no `$set`: con `$set` una ubicacion vieja sobrevivia al reprocesar.
 - `write_mongo` ya tiene `--replace-source` (borra solo los chunkIndex huérfanos de ese source, tras el upsert) y
   `--ensure-index` actualiza el índice de dev con `lat`/`lng`. Dev (`china_documents_dev`): 68 chunks de `oxford-test` (15 con ubicacion).
-- Pendiente, en este orden: `extract_hitos` → `presign` → infra CDK →
+- `extract_hitos` hecho (local, probado): 5 chunks por llamada a gpt-4o, hitos en es (base) + en + zh en la misma respuesta,
+  `sitio_moderno` como segundo intento (como `lugarModerno` de china-history), y el modelo debe CITAR la frase que da el hecho y el
+  lugar: se descarta si la cita no esta en el texto o no nombra el lugar (el lugar de un evento lo elegia mal: 'muerte del Rey You'
+  en Luoyi, 'conquista de Shang' en Xi'an). Id verificado: 1249/1259 de china-history coinciden (los otros 10 se editaron a mano).
+  `write_mongo --kind hitos`: ReplaceOne por (id, origen='china-documents-reader'), nunca pisa ni borra un hito ajeno.
+  Prueba (Oxford Handbook, PDF 376-395, Zhou Occidental): 3 hitos fiables de 38 chunks; dev tiene 3. Rendimiento bajo a proposito.
+- Pendiente, en este orden: `presign` → infra CDK →
   UI de subida/hitos → agente `ask` → CI/CD. Ver `README.md` y `backend/README.md`.
 
 ## Ideas apuntadas (sin implementar)
@@ -108,6 +114,8 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   que ahora da menos chunks sin dejar `chunkIndex` huérfanos.
 - Base de pruebas `china_documents_dev` tiene 68 chunks de `source: oxford-test` (págs. 14-45 del Oxford Handbook).
 
+- **Chino (`_zh`) no es determinista:** en dos ejecuciones el mismo nombre propio salio bien (发) y mal (法, 'ley'). Los lugares salen bien
+  cuando el texto original trae los caracteres (el Oxford los incluye entre parentesis). Revisar `_zh` de nombres de personas.
 - **Reprocesar hitos:** el `id` depende del titulo/lugar que genera el modelo, que varia entre ejecuciones, asi que reprocesar un
   libro crea ids nuevos y deja los viejos huerfanos. Para limpiar, un `--replace-source` de hitos debe borrar SOLO documentos con
   una marca propia (p. ej. `origen: "china-documents-reader"`) Y `fuente` del libro, para no tocar nunca los 1259 de china-history.

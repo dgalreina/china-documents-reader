@@ -118,3 +118,50 @@ def test_reescribir_un_chunk_reemplaza_el_documento_entero():
     (op,) = build_operations("x", [doc(0)])
     assert isinstance(op, ReplaceOne)
     assert "ubicacion" not in op._doc and op._upsert is True
+
+
+# ---- hitos_conocidos ---------------------------------------------------------------------------------
+
+
+def hito_doc(**over):
+    base = {
+        "id": "6e9d225ce7", "lugar": "Luoyang, Henan", "año": -1042, "titulo": "Fundación de Chengzhou",
+        "descripcion": "Se funda la ciudad.", "fuente": "mi-libro", "origen": "china-documents-reader",
+        "location": {"type": "Point", "coordinates": [112.45, 34.62]},
+        "lugar_en": "Luoyang, Henan", "titulo_zh": "成周的建立",
+    }
+    return {**base, **over}
+
+
+def test_hito_valido_genera_reemplazo_por_id_y_origen():
+    from lambdas.write_mongo.store import build_hito_operations
+
+    (op,) = build_hito_operations("mi-libro", [hito_doc()])
+    assert op._filter == {"id": "6e9d225ce7", "origen": "china-documents-reader"} and op._upsert is True
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"location": None},  # sin coordenadas: el schema de china-history lo exige
+        {"location": {"type": "Point", "coordinates": [34.62, 112.45]}},  # [lat, lng] al revés
+        {"location": {"type": "Point", "coordinates": [2.3, 48.8]}},  # fuera de China
+        {"id": "no-es-hex"},
+        {"año": 5000},
+        {"origen": "china-history"},  # nunca se escribe como si fuera de otro
+        {"titulo_zh": "Founding of Chengzhou"},  # el chino no contiene caracteres chinos
+        {"fuente": "otro-libro"},
+    ],
+)
+def test_hito_invalido_se_rechaza(over):
+    from lambdas.write_mongo.store import build_hito_operations
+
+    with pytest.raises(ContractError):
+        build_hito_operations("mi-libro", [hito_doc(**over)])
+
+
+def test_hito_con_id_repetido_se_rechaza():
+    from lambdas.write_mongo.store import build_hito_operations
+
+    with pytest.raises(ContractError):
+        build_hito_operations("mi-libro", [hito_doc(), hito_doc()])

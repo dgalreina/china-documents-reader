@@ -8,10 +8,11 @@ Protecciones (ver "Pruebas y base de datos de producción" en CLAUDE.md):
 """
 
 import os
+import re
 from dataclasses import dataclass
 
-from pymongo import MongoClient, ReplaceOne
-from pymongo.errors import OperationFailure
+from pymongo import GEOSPHERE, MongoClient, ReplaceOne
+from pymongo.errors import BulkWriteError, OperationFailure
 
 from shared.geocoder import LAT_RANGE, LNG_RANGE
 
@@ -187,3 +188,95 @@ def ensure_dev_indexes(collection) -> None:
         if "already exists" not in str(err).lower() and getattr(err, "code", None) != 68:
             raise
         collection.update_search_index(VECTOR_INDEX_NAME, definition)
+
+
+# =====================================================================================================
+# hitos_conocidos
+# =====================================================================================================
+
+HITOS_COLLECTION = "hitos_conocidos"
+# Marca propia de los hitos que escribe esta app. Los 1259 de china-history no la llevan: así nunca se
+# reemplaza ni se borra uno de los suyos aunque coincida un id o un nombre de libro.
+ORIGIN = "china-documents-reader"
+HITO_REQUIRED = ("id", "lugar", "año", "titulo", "descripcion", "fuente", "location", "origen")
+HITO_ID = re.compile(r"^[0-9a-f]{10}$")
+CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def validate_hito(hito: dict) -> None:
+    """Lanza ContractError si el hito no se puede escribir en hitos_conocidos."""
+    where = f"hito {hito.get('id', '?')}"
+    for field_name in HITO_REQUIRED:
+        if hito.get(field_name) in (None, ""):
+            raise ContractError(f"{where}: falta {field_name}")
+    if not HITO_ID.match(hito["id"]):
+        raise ContractError(f"{where}: id con formato inválido (10 caracteres hex)")
+    if hito["origen"] != ORIGIN:
+        raise ContractError(f"{where}: origen debe ser {ORIGIN!r}")
+    year = hito["año"]
+    if not isinstance(year, int) or isinstance(year, bool) or not (MIN_YEAR <= year <= MAX_YEAR):
+        raise ContractError(f"{where}: año fuera de {MIN_YEAR}..{MAX_YEAR}")
+    for field_name in ("lugar", "titulo", "descripcion"):
+        if not hito[field_name].strip():
+            raise ContractError(f"{where}: {field_name} vacío")
+    location = hito["location"]
+    coords = location.get("coordinates") if isinstance(location, dict) else None
+    if location.get("type") != "Point" or not coords or len(coords) != 2:
+        raise ContractError(f"{where}: location debe ser un Point GeoJSON [lng, lat]")
+    lng, lat = coords
+    if not (LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
+        raise ContractError(f"{where}: location fuera de China ({lat}, {lng}); ¿[lng, lat] al revés?")
+    for field_name in ("lugar_zh", "titulo_zh", "descripcion_zh"):
+        if hito.get(field_name) and not CJK.search(hito[field_name]):
+            raise ContractError(f"{where}: {field_name} no contiene caracteres chinos")
+
+
+def build_hito_operations(source: str, hitos: list[dict]) -> list[ReplaceOne]:
+    """Valida todo y devuelve los reemplazos por id. Todo o nada."""
+    if not source or not source.strip():
+        raise ContractError("source (slug del libro) vacío")
+    seen: set[str] = set()
+    for hito in hitos:
+        validate_hito(hito)
+        if hito["fuente"] != source:
+            raise ContractError(f"hito {hito['id']}: fuente {hito['fuente']!r} no coincide con --source {source!r}")
+        if hito["id"] in seen:
+            raise ContractError(f"id {hito['id']} repetido")
+        seen.add(hito["id"])
+    # El filtro incluye `origen`: si el id ya existe pero es de otro origen (un hito de china-history), el upsert
+    # intentaría insertar un duplicado y el índice único lo rechaza. Nunca se pisa un hito ajeno.
+    clean = [{k: v for k, v in hito.items() if not k.startswith("_")} for hito in hitos]  # _evidencia es solo de revisión
+    return [ReplaceOne({"id": hito["id"], "origen": ORIGIN}, hito, upsert=True) for hito in clean]
+
+
+def write_hitos(
+    target: Target, source: str, hitos: list[dict], write: bool = False, ensure_index: bool = False, replace_source: bool = False
+) -> WriteReport:
+    operations = build_hito_operations(source, hitos)  # valida antes de abrir ninguna conexión
+    client = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
+    try:
+        collection = client[target.db_name][HITOS_COLLECTION]
+        ids = [h["id"] for h in hitos]
+        existing = collection.count_documents({"id": {"$in": ids}, "origen": ORIGIN})
+        report = WriteReport(target.name, target.db_name, source, not write, len(hitos), existing)
+        orphan_filter = {"origen": ORIGIN, "fuente": source, "id": {"$nin": ids}}
+        if replace_source:
+            report.orphans = collection.count_documents(orphan_filter)
+        if ensure_index:
+            if target.name != "dev":
+                raise ContractError("--ensure-index solo funciona con --target dev")
+            if write:
+                collection.create_index([("location", GEOSPHERE)])
+                collection.create_index("año")
+                collection.create_index("id", unique=True)
+        if write and operations:
+            try:
+                result = collection.bulk_write(operations, ordered=False)
+            except BulkWriteError as err:
+                raise ContractError(f"colisión de id con un hito que no es de esta app (no se pisa): {err.details['writeErrors'][:1]}")
+            report.written = result.upserted_count + result.matched_count
+            if replace_source:
+                collection.delete_many(orphan_filter)
+        return report
+    finally:
+        client.close()
