@@ -45,6 +45,12 @@ def main() -> None:
     print(f"Listos para guardar: {len(result.ready)} | Pendientes: {len(result.pending)}")
     if result.ready:
         print(f"Dimensiones del embedding: {len(result.ready[0]['embedding'])}")
+    located = sum(1 for d in result.ready if "ubicacion" in d)
+    print(f"Con ubicación: {located} de {len(result.ready)} | por fuente: {dict(result.geo_sources)}")
+    if result.geo_unresolved:
+        print("Sitios que el modelo nombró y no se pudieron resolver:")
+        for (site, province), n in result.geo_unresolved.most_common(15):
+            print(f"  {n}x {site} ({province})")
     for doc in result.ready[:5]:
         print(f"  chunk {doc['chunkIndex']} (pág. {doc['pageStart']}): {doc['añoInicio']} a {doc['añoFin']} | {doc['text'][:70]!r}")
     for doc in result.pending[:5]:

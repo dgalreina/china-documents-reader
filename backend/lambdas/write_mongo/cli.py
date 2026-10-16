@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--source", required=True, help="slug del documento, p. ej. gernet-mundo-chino")
     parser.add_argument("--target", required=True, choices=["dev", "prod"])
     parser.add_argument("--write", action="store_true", help="escribe de verdad (sin esto es dry-run)")
+    parser.add_argument("--replace-source", action="store_true", help="borra los chunks de ese source que ya no están en esta tanda (solo ese source)")
     parser.add_argument("--ensure-index", action="store_true", help="solo dev: crea los índices en la base de pruebas")
     args = parser.parse_args()
 
@@ -34,7 +35,7 @@ def main() -> None:
             if typed.strip() != target.db_name:
                 print("No coincide. Cancelado, no se ha escrito nada.")
                 return
-        report = write_chunks(target, args.source, docs, write=args.write, ensure_index=args.ensure_index)
+        report = write_chunks(target, args.source, docs, write=args.write, ensure_index=args.ensure_index, replace_source=args.replace_source)
     except ContractError as err:
         print(f"ERROR de contrato, no se ha escrito nada: {err}")
         raise SystemExit(1)
@@ -42,6 +43,9 @@ def main() -> None:
     modo = "DRY-RUN (no se ha escrito nada)" if report.dry_run else "ESCRITO"
     print(f"{modo} -> {report.target} / base '{report.db_name}' / source '{report.source}'")
     print(f"Chunks: {report.total} | ya existían (se reemplazarían): {report.existing} | nuevos: {report.total - report.existing}")
+    if args.replace_source:
+        accion = "borrados" if not report.dry_run else "se borrarían"
+        print(f"Huérfanos del source '{report.source}' ({accion}): {report.orphans}")
     if not report.dry_run:
         print(f"Operaciones aplicadas: {report.written}")
 

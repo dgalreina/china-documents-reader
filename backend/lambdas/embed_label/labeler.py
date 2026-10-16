@@ -39,6 +39,21 @@ class ChunkYears(BaseModel):
     indice: int = Field(description="Número del fragmento dentro del lote, tal como se dio (1, 2, 3...).")
     ano_inicio: int | None = Field(description="Año en que empieza lo que narra el fragmento. Negativo si es a.C. null si no se puede determinar.")
     ano_fin: int | None = Field(description="Año en que termina lo que narra el fragmento. Negativo si es a.C. null si no se puede determinar.")
+    sitio_principal: str | None = Field(
+        default=None,
+        description=(
+            "Nombre en pinyin, tal como aparece en el texto, del ÚNICO sitio concreto (yacimiento, ciudad, capital) "
+            "del que trata principalmente el fragmento. null si es un texto general, trata de varios sitios por igual, "
+            "o solo menciona una región, un país o una cultura. No adivines."
+        ),
+    )
+    provincia: str | None = Field(
+        default=None,
+        description=(
+            "Provincia o región actual de China donde está ese sitio, en pinyin inglés (Henan, Shaanxi, Inner Mongolia...). "
+            "null si no estás seguro."
+        ),
+    )
 
 
 class BatchLabels(BaseModel):
@@ -49,6 +64,15 @@ class BatchLabels(BaseModel):
 class YearRange:
     ano_inicio: int
     ano_fin: int
+
+
+@dataclass(frozen=True)
+class ChunkLabel:
+    """Etiqueta de un chunk: años (obligatorios para guardarlo) y sitio principal (opcional)."""
+
+    years: YearRange
+    site: str | None = None
+    province: str | None = None
 
 
 DOC_SYSTEM_PROMPT = (
@@ -68,7 +92,13 @@ CHUNK_SYSTEM_PROMPT = (
     "Tienes una descripción general del documento solo como orientación: NO es la respuesta. El rango de "
     "cada fragmento debe salir de lo que dice ese fragmento (culturas, dinastías, personajes, fechas). "
     "Da el rango más estrecho que el texto justifique; si solo puedes decir 'toda la época del libro', "
-    "devuelve null."
+    "devuelve null.\n"
+    "Los pies de figura, créditos de fotos y mapas, y fechas de excavación, publicación o ediciones (p. ej. "
+    "'foto de 1925', 'Excavado en 1957') NO son la época del contenido. Si el fragmento es solo un pie de "
+    "figura, un crédito o una referencia bibliográfica, devuelve null en los años.\n"
+    "Además, para cada fragmento indica en sitio_principal el sitio concreto del que trata (y su provincia "
+    "actual en provincia), solo si hay UNO claro. Si es un texto general, de varios sitios por igual, o solo "
+    "nombra una región o un país, deja null: es preferible no dar sitio a dar uno dudoso."
 )
 
 
@@ -117,11 +147,12 @@ def infer_document_period(client: OpenAI, model: str, head_text: str) -> Documen
 
 def _label_batch(
     client: OpenAI, model: str, period: DocumentPeriod | None, texts: list[str]
-) -> dict[int, YearRange | None]:
+) -> dict[int, ChunkLabel | None]:
     """Etiqueta un lote. Clave: posición 0-based dentro del lote."""
     context = ""
     if period is not None:
-        context = f"Periodo general del documento: {period.resumen} ({period.ano_inicio} a {period.ano_fin}).\n\n"
+        # Sin los años numéricos: con ellos el modelo tiende a copiarlos como respuesta.
+        context = f"Descripción general del documento (solo orientación): {period.resumen}\n\n"
     body = "\n\n".join(
         f"--- Fragmento {i} ---\n{text[:CHUNK_PREVIEW_CHARS]}" for i, text in enumerate(texts, start=1)
     )
@@ -137,24 +168,27 @@ def _label_batch(
     if parsed is None:
         raise ValueError("Respuesta sin el formato esperado")
 
-    result: dict[int, YearRange | None] = {}
+    result: dict[int, ChunkLabel | None] = {}
     for label in parsed.etiquetas:
         position = label.indice - 1
         if 0 <= position < len(texts):
-            result[position] = valid_range(label.ano_inicio, label.ano_fin)
+            years = valid_range(label.ano_inicio, label.ano_fin)
+            site = (label.sitio_principal or "").strip() or None
+            province = (label.provincia or "").strip() or None
+            result[position] = ChunkLabel(years, site, province) if years else None
     return result
 
 
 def label_chunks(
     client: OpenAI, model: str, period: DocumentPeriod | None, texts: list[str]
-) -> list[YearRange | None]:
-    """Un rango válido (o None = pendiente) por texto, en el mismo orden.
+) -> list[ChunkLabel | None]:
+    """Una etiqueta válida (o None = pendiente) por texto, en el mismo orden.
 
     Si un lote falla o el modelo se salta algún fragmento, se reintenta una vez
     ese lote; lo que siga sin etiqueta válida queda en None. Nunca se rellena
     con el año de un chunk vecino.
     """
-    labels: list[YearRange | None] = [None] * len(texts)
+    labels: list[ChunkLabel | None] = [None] * len(texts)
     for start in range(0, len(texts), BATCH_SIZE):
         batch = texts[start : start + BATCH_SIZE]
         pending = set(range(len(batch)))

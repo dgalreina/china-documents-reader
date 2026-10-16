@@ -29,6 +29,13 @@ Objetivo: demostrar AWS serverless a recruiters. `china-history` se queda en Dig
   "pendientes", fuera de `book_chunks`. Los años deben estar entre **-10000 y 3000** (a.C. en negativo) y
   `añoInicio <= añoFin`: el último intento de búsqueda de china-history (`MARGENES_AÑO_RAG = [50,150,400,null]`)
   filtra por ese rango, así que fuera de él el chunk queda excluido de todas las búsquedas.
+- **Ubicación del chunk (OPCIONAL, a petición de china-history):** si el sitio principal se resuelve con claridad, el chunk
+  lleva `ubicacion` (GeoJSON Point `[lng, lat]`), `lat`, `lng` (números sueltos: el filtro de `$vectorSearch` admite
+  rangos numéricos pero no operadores geoespaciales, así que prefiltran por caja), `ubicacionNombre`, `ubicacionFuente`
+  (`curated`/`chgis`/`mapbox`) y `ubicacionCoincidencia`. **Nunca una ubicación aproximada o genérica** (ni el centro de una
+  provincia): si no hay resultado claro, el chunk se guarda igual, sin ubicación. Los años siguen siendo obligatorios.
+  Para usarla, china-history debe añadir `lat`/`lng` como campos *filter* de su índice vectorial y cambiar `buscarEnLibro`
+  (eso lo hace su dueño; verificado en dev que el prefiltro por caja funciona).
 - Escritura en `book_chunks`: **upsert por `(source, chunkIndex)`**, para que reprocesar un PDF no duplique.
 - Los campos extra de `book_chunks` (página de origen, modelo de embeddings) no están en el schema Mongoose
   `BookChunk` de `china-history-api`; no rompe nada, pero hay que añadirlos allí si se quieren consultar.
@@ -49,6 +56,14 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
 - URIs separadas dev/prod; no reutilizar el `MONGODB_URI` de china-history.
 - Hasta que ese paso exista, ningún código de este repo se conecta a Mongo.
 
+## Licencias y datos externos
+
+- Proyecto **personal y no comercial** (portfolio). Si eso cambiara, revisar antes la licencia de CHGIS y los términos de Mapbox.
+- **Los datos de CHGIS no se redistribuyen**: nunca dentro de este repo (puede ser público). Se leen desde fuera: ruta local
+  (`CHGIS_DIR`) y, en AWS, un bucket de S3 privado. Igual para `yacimientos.json` / `capitales.json` de china-history
+  (solo lectura, por ruta en el `.env`, sin copiarlos al repo).
+- `china-history` en DigitalOcean no necesita esos datos: solo lee de Mongo las coordenadas ya calculadas.
+
 ## Secretos
 
 `OPENAI_API_KEY` y `MONGODB_URI` van en un `.env` (ya en `.gitignore`). Nunca imprimirlos ni commitearlos.
@@ -62,6 +77,14 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   `(source, chunkIndex)`). Variables: `MONGODB_URI_DEV`, `MONGODB_URI_PROD`, opcionalmente `MONGODB_DB_DEV/PROD`
   (por defecto `china_documents_dev` y `china-history`). **Falta probarlo contra la base de dev.** Cluster0 es M0
   (3 índices de búsqueda máx., 1 usado por `china-history.book_chunks`, sin backups).
+- `shared/geocoder.py` (compartido con `extract_hitos`): fuentes en orden curated (china-history) -> CHGIS -> Wikidata -> Mapbox.
+  Wikidata/Mapbox exigen provincia esperada, un unico candidato (o todos a <25 km), nombre parecido y, en Mapbox, solo lugares
+  (nunca provincia/pais) con relevancia >= 0.8. Se guarda `ubicacionCoincidencia` para auditar. Prueba con el Oxford Handbook
+  (pags. 14-45): **15 de 68** chunks localizados (antes 2 con CHGIS+Mapbox); sitios revisados a mano contra coordenadas conocidas.
+  Sin resolver: Cishan, Miaodigou, Xipo (no estan en Wikidata con coordenadas o no pasan la comprobacion).
+- `write_mongo` escribe con **ReplaceOne** (documento entero), no `$set`: con `$set` una ubicacion vieja sobrevivia al reprocesar.
+- `write_mongo` ya tiene `--replace-source` (borra solo los chunkIndex huérfanos de ese source, tras el upsert) y
+  `--ensure-index` actualiza el índice de dev con `lat`/`lng`. Dev (`china_documents_dev`): 68 chunks de `oxford-test` (15 con ubicacion).
 - Pendiente, en este orden: `extract_hitos` → `presign` → infra CDK →
   UI de subida/hitos → agente `ask` → CI/CD. Ver `README.md` y `backend/README.md`.
 
@@ -76,6 +99,20 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
 - `--replace-source` en `write_mongo` (borrar solo `{source: slug}`, con confirmación en prod) para reprocesar un PDF
   que ahora da menos chunks sin dejar `chunkIndex` huérfanos.
 - Base de pruebas `china_documents_dev` tiene 68 chunks de `source: oxford-test` (págs. 14-45 del Oxford Handbook).
+
+- **Mas cobertura de ubicacion:** ampliar `yacimientos.json` de china-history con los sitios que salgan sin resolver, o probar
+  otra fuente (p. ej. Nominatim/OSM) si Wikidata se queda corto en otros libros.
+- **Para china-history (verificado en dev):** si prefiltran por caja geografica con un `$and` simple, los chunks SIN ubicacion
+  (la mayoria: 53 de 68 en la prueba) quedan excluidos, igual que los que no tienen anyo. Para no perderlos hay que usar
+  `{"$or": [{"$and": [caja lat/lng]}, {"lat": {"$exists": false}}]}` (funciona en `$vectorSearch`; `{"lat": {"$eq": null}}` NO).
+  Un `$or` que contiene un `$and` funciona; un `$and` anidado directamente dentro de otro `$and` devolvio vacio.
+  Aun asi, los chunks sin ubicacion siguen compitiendo solo por significado y epoca, asi que el fallo de Puyang/Wangchenggang
+  puede persistir con ellos; una opcion es copiar su estrategia de margenes (primero solo los localizados en la caja, luego relajar).
+- Aprendizaje: una comprobación "la provincia coincide" dejó pasar el centro de la provincia como si fuera el sitio
+  (Erlitou, Jiahu, Yangshao... con las mismas coordenadas). Ante un resultado de geocodificación, validar también el *tipo* de
+  lugar y que el nombre se parezca; y revisar a mano una muestra antes de fiarse de las métricas. Otros fallos que solo salieron revisando datos a mano:
+  el pie de una foto de 1925 tomado como epoca del contenido (el prompt ahora lo excluye); un museo o una estacion de metro
+  del mismo nombre tomados por el yacimiento (se priorizan los candidatos que parecen yacimiento).
 
 ## Comandos
 

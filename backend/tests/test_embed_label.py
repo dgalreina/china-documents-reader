@@ -11,13 +11,14 @@ from lambdas.embed_label.labeler import (
 )
 from lambdas.embed_label.pipeline import embed_and_label
 from lambdas.extract_chunk.chunker import Chunk
+from shared.geocoder import Geocoder
 
 
 class FakeClient:
     """Imita client.embeddings.create y client.chat.completions.parse."""
 
-    def __init__(self, answers: dict[int, tuple[int | None, int | None]]):
-        # answers: posición global del chunk (0-based) -> (inicio, fin)
+    def __init__(self, answers: dict[int, tuple]):
+        # answers: posición global del chunk (0-based) -> (inicio, fin) o (inicio, fin, sitio, provincia)
         self.answers = answers
         self.embedded: list[str] = []
         self.embeddings = SimpleNamespace(create=self._embed)
@@ -36,8 +37,9 @@ class FakeClient:
             user = messages[1]["content"]
             labels = []
             for n, text in enumerate(self._fragments(user), start=1):
-                ini, fin = self.answers[int(text)]
-                labels.append(ChunkYears(indice=n, ano_inicio=ini, ano_fin=fin))
+                ini, fin, *geo = self.answers[int(text)]
+                site, province = (geo + [None, None])[:2]
+                labels.append(ChunkYears(indice=n, ano_inicio=ini, ano_fin=fin, sitio_principal=site, provincia=province))
             parsed = BatchLabels(etiquetas=labels)
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed))])
 
@@ -64,7 +66,7 @@ def test_valid_range_respeta_el_contrato():
 def test_chunks_sin_ano_valido_van_a_pendientes_y_no_se_embeben():
     answers = {0: (618, 700), 1: (None, None), 2: (900, 100), 3: (800, 907)}
     client = FakeClient(answers)
-    result = embed_and_label(make_chunks(4), client=client, label_model="fake")
+    result = embed_and_label(make_chunks(4), client=client, label_model="fake", geocoder=Geocoder())
 
     assert [d["chunkIndex"] for d in result.ready] == [0, 3]
     assert [d["chunkIndex"] for d in result.pending] == [1, 2]
@@ -74,7 +76,7 @@ def test_chunks_sin_ano_valido_van_a_pendientes_y_no_se_embeben():
 
 def test_los_docs_listos_cumplen_el_contrato():
     client = FakeClient({0: (618, 907)})
-    doc = embed_and_label(make_chunks(1), client=client, label_model="fake").ready[0]
+    doc = embed_and_label(make_chunks(1), client=client, label_model="fake", geocoder=Geocoder()).ready[0]
     assert doc["añoInicio"] == 618 and doc["añoFin"] == 907
     assert doc["embeddingModel"] == "text-embedding-3-small"
     assert len(doc["embedding"]) == 1536
@@ -84,7 +86,7 @@ def test_los_docs_listos_cumplen_el_contrato():
 def test_mas_de_un_lote():
     n = 25  # 3 lotes de 10
     client = FakeClient({i: (100, 200) for i in range(n)})
-    result = embed_and_label(make_chunks(n), client=client, label_model="fake")
+    result = embed_and_label(make_chunks(n), client=client, label_model="fake", geocoder=Geocoder())
     assert len(result.ready) == n and not result.pending
 
 
@@ -99,3 +101,28 @@ def test_rango_igual_al_periodo_del_documento_es_pendiente():
     corto = DocumentPeriod(resumen="x", ano_inicio=618, ano_fin=907)
     assert not is_uninformative(YearRange(618, 907), corto)
     assert not is_uninformative(YearRange(618, 907), None)
+
+
+def test_ubicacion_es_opcional_y_no_bloquea_el_chunk():
+    # Chunk con sitio que nadie sabe resolver: se guarda igual, sin ubicación.
+    client = FakeClient({0: (-4000, -3500, "Sitio Inventado", "Henan"), 1: (100, 200)})
+    result = embed_and_label(make_chunks(2), client=client, label_model="fake", geocoder=Geocoder())
+    assert len(result.ready) == 2
+    assert all("ubicacion" not in d and "lat" not in d for d in result.ready)
+    assert result.geo_unresolved[("Sitio Inventado", "Henan")] == 1
+
+
+def test_ubicacion_resuelta_se_guarda_en_geojson_lng_lat(tmp_path):
+    import json
+
+    (tmp_path / "yacimientos").mkdir()
+    (tmp_path / "yacimientos" / "yacimientos.json").write_text(
+        json.dumps([{"nombre": "Erlitou", "nombre_en": "Erlitou", "lugar_en": "Yanshi, Henan", "geometry": {"type": "Point", "coordinates": [112.7, 34.7]}}]),
+        encoding="utf-8",
+    )
+    client = FakeClient({0: (-1900, -1500, "Erlitou site", "Henan")})
+    result = embed_and_label(make_chunks(1), client=client, label_model="fake", geocoder=Geocoder(curated_dir=tmp_path))
+    doc = result.ready[0]
+    assert doc["ubicacion"] == {"type": "Point", "coordinates": [112.7, 34.7]}  # [lng, lat]
+    assert (doc["lat"], doc["lng"]) == (34.7, 112.7)
+    assert doc["ubicacionFuente"] == "curated" and doc["ubicacionNombre"] == "Erlitou site"

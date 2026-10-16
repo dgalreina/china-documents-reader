@@ -80,3 +80,41 @@ def test_dev_no_puede_apuntar_a_la_base_de_produccion(monkeypatch):
     monkeypatch.delenv("MONGODB_DB_PROD", raising=False)
     with pytest.raises(ContractError):
         resolve_target("dev")
+
+
+def loc(**over):
+    base = {
+        "ubicacion": {"type": "Point", "coordinates": [112.7, 34.7]},
+        "lat": 34.7, "lng": 112.7, "ubicacionNombre": "Erlitou", "ubicacionFuente": "curated",
+    }
+    return {**base, **over}
+
+
+def test_ubicacion_completa_y_coherente_es_valida():
+    build_operations("x", [doc(0, **loc())])  # no lanza
+
+
+def test_documento_sin_ubicacion_sigue_siendo_valido():
+    build_operations("x", [doc(0)])
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"ubicacionFuente": None},  # incompleta
+        {"lat": 48.8, "lng": 2.3, "ubicacion": {"type": "Point", "coordinates": [2.3, 48.8]}},  # fuera de China
+        {"ubicacion": {"type": "Point", "coordinates": [34.7, 112.7]}},  # [lat, lng] al revés
+    ],
+)
+def test_ubicacion_incorrecta_se_rechaza(over):
+    with pytest.raises(ContractError):
+        build_operations("x", [doc(0, **loc(**over))])
+
+
+def test_reescribir_un_chunk_reemplaza_el_documento_entero():
+    # Fallo real: con $set, una ubicación antigua sobrevivía cuando la nueva tanda ya no la traía.
+    from pymongo import ReplaceOne
+
+    (op,) = build_operations("x", [doc(0)])
+    assert isinstance(op, ReplaceOne)
+    assert "ubicacion" not in op._doc and op._upsert is True

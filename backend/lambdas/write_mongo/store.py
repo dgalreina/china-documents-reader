@@ -10,8 +10,10 @@ Protecciones (ver "Pruebas y base de datos de producción" en CLAUDE.md):
 import os
 from dataclasses import dataclass
 
-from pymongo import MongoClient, UpdateOne
+from pymongo import MongoClient, ReplaceOne
 from pymongo.errors import OperationFailure
+
+from shared.geocoder import LAT_RANGE, LNG_RANGE
 
 from ..embed_label.embedder import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from ..embed_label.labeler import MAX_YEAR, MIN_YEAR
@@ -73,10 +75,29 @@ def validate_doc(doc: dict) -> None:
         raise ContractError(f"{where}: embedding de {len(doc['embedding'])} dimensiones, deben ser {EMBEDDING_DIMENSIONS}")
     if not doc["text"].strip():
         raise ContractError(f"{where}: texto vacío")
+    validate_location(doc, where)
 
 
-def build_operations(source: str, docs: list[dict]) -> list[UpdateOne]:
-    """Valida todo y devuelve los upserts por (source, chunkIndex). Todo o nada."""
+LOCATION_FIELDS = ("ubicacion", "lat", "lng", "ubicacionNombre", "ubicacionFuente")
+
+
+def validate_location(doc: dict, where: str) -> None:
+    """La ubicación es OPCIONAL, pero si está debe estar completa y ser coherente."""
+    present = [f for f in LOCATION_FIELDS if doc.get(f) is not None]
+    if not present:
+        return
+    if len(present) != len(LOCATION_FIELDS):
+        raise ContractError(f"{where}: ubicación incompleta (faltan {sorted(set(LOCATION_FIELDS) - set(present))})")
+    lat, lng = doc["lat"], doc["lng"]
+    if not (LAT_RANGE[0] <= lat <= LAT_RANGE[1] and LNG_RANGE[0] <= lng <= LNG_RANGE[1]):
+        raise ContractError(f"{where}: ubicación fuera de China ({lat}, {lng})")
+    point = doc["ubicacion"]
+    if point.get("type") != "Point" or point.get("coordinates") != [lng, lat]:
+        raise ContractError(f"{where}: ubicacion no coincide con lat/lng (GeoJSON es [lng, lat])")
+
+
+def build_operations(source: str, docs: list[dict]) -> list[ReplaceOne]:
+    """Valida todo y devuelve los reemplazos (upsert) por (source, chunkIndex). Todo o nada."""
     if not source or not source.strip():
         raise ContractError("source (slug del documento) vacío")
     seen: set[int] = set()
@@ -86,9 +107,10 @@ def build_operations(source: str, docs: list[dict]) -> list[UpdateOne]:
             raise ContractError(f"chunkIndex {doc['chunkIndex']} repetido")
         seen.add(doc["chunkIndex"])
     return [
-        UpdateOne(
+        # Reemplaza el documento ENTERO (no $set): si al reprocesar ya no hay ubicación, no debe quedar la antigua.
+        ReplaceOne(
             {"source": source, "chunkIndex": doc["chunkIndex"]},
-            {"$set": {**doc, "source": source}},
+            {**doc, "source": source},
             upsert=True,
         )
         for doc in docs
@@ -104,10 +126,16 @@ class WriteReport:
     total: int
     existing: int  # ya existían (se reemplazarían)
     written: int = 0
+    orphans: int = 0  # chunkIndex de ese source que ya no existen y se borrarían/borraron (--replace-source)
 
 
 def write_chunks(
-    target: Target, source: str, docs: list[dict], write: bool = False, ensure_index: bool = False
+    target: Target,
+    source: str,
+    docs: list[dict],
+    write: bool = False,
+    ensure_index: bool = False,
+    replace_source: bool = False,
 ) -> WriteReport:
     operations = build_operations(source, docs)  # valida antes de abrir ninguna conexión
     client = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
@@ -116,6 +144,11 @@ def write_chunks(
         indexes = [d["chunkIndex"] for d in docs]
         existing = collection.count_documents({"source": source, "chunkIndex": {"$in": indexes}})
         report = WriteReport(target.name, target.db_name, source, not write, len(docs), existing)
+        if replace_source:
+            # Solo los chunks de ESTE source que ya no están en la nueva tanda. Se cuentan siempre (dry-run
+            # incluido) y se borran después del upsert, para no dejar nunca el documento vacío.
+            orphan_filter = {"source": source, "chunkIndex": {"$nin": indexes}}
+            report.orphans = collection.count_documents(orphan_filter)
         if ensure_index:
             if target.name != "dev":
                 raise ContractError("--ensure-index solo funciona con --target dev (el índice de prod lo gestionas en Atlas)")
@@ -124,28 +157,33 @@ def write_chunks(
         if write and operations:
             result = collection.bulk_write(operations, ordered=False)
             report.written = result.upserted_count + result.matched_count
+            if replace_source:
+                collection.delete_many(orphan_filter)
         return report
     finally:
         client.close()
 
 
 def ensure_dev_indexes(collection) -> None:
-    """Crea en la base de PRUEBAS el índice único y el vectorial (misma definición que prod)."""
+    """Crea en la base de PRUEBAS el índice único y el vectorial (el de prod más lat/lng como filtros).
+
+    Si el vectorial ya existe, lo actualiza (Atlas lo reconstruye). El índice de prod lo gestiona el dueño de china-history.
+    """
     collection.create_index([("source", 1), ("chunkIndex", 1)], unique=True)
+    definition = {
+        "fields": [
+            {"type": "vector", "path": "embedding", "numDimensions": EMBEDDING_DIMENSIONS, "similarity": "cosine"},
+            {"type": "filter", "path": "añoInicio"},
+            {"type": "filter", "path": "añoFin"},
+            # Para que china-history pueda prefiltrar por caja geográfica dentro de $vectorSearch
+            # (el filtro admite rangos numéricos, no operadores geoespaciales).
+            {"type": "filter", "path": "lat"},
+            {"type": "filter", "path": "lng"},
+        ]
+    }
     try:
-        collection.create_search_index(
-            {
-                "name": VECTOR_INDEX_NAME,
-                "type": "vectorSearch",
-                "definition": {
-                    "fields": [
-                        {"type": "vector", "path": "embedding", "numDimensions": EMBEDDING_DIMENSIONS, "similarity": "cosine"},
-                        {"type": "filter", "path": "añoInicio"},
-                        {"type": "filter", "path": "añoFin"},
-                    ]
-                },
-            }
-        )
+        collection.create_search_index({"name": VECTOR_INDEX_NAME, "type": "vectorSearch", "definition": definition})
     except OperationFailure as err:
         if "already exists" not in str(err).lower() and getattr(err, "code", None) != 68:
             raise
+        collection.update_search_index(VECTOR_INDEX_NAME, definition)
