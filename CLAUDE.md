@@ -40,9 +40,13 @@ Objetivo: demostrar AWS serverless a recruiters. `china-history` se queda en Dig
 - Los campos extra de `book_chunks` (página de origen, modelo de embeddings) no están en el schema Mongoose
   `BookChunk` de `china-history-api`; no rompe nada, pero hay que añadirlos allí si se quieren consultar.
 - `hitos_conocidos`: `id`, `lugar`, `año`, `titulo`, `descripcion`, `fuente`, `location` (GeoJSON Point,
-  `coordinates: [lng, lat]`). Opcionales: `lugar_en`/`titulo_en`/`descripcion_en` y `_zh` (sin ellos el hito se ve
-  siempre en español). Los hitos necesitan geocodificar el lugar.
-- `id` de un hito: **mismo algoritmo que `scripts/extract-hitos.mjs` de china-history-api**:
+  `coordinates: [lng, lat]`; **obligatorio**: un hito sin coordenadas se descarta). Los hitos necesitan geocodificar el lugar.
+- **Idioma (corregido por china-history):** `book_chunks` es SIEMPRE en inglés (el RAG no debe favorecer un libro por idioma),
+  pero en `hitos_conocidos` los campos base `titulo`/`lugar`/`descripcion` son en **ESPAÑOL** (idioma por defecto de la app; los
+  1259 hitos existentes lo estan) y `titulo_en`/`lugar_en`/`descripcion_en` son la traduccion anadida encima. Escribir ingles
+  en los campos base mezclaria idiomas para el usuario por defecto. Plan: la misma llamada de `extract_hitos` devuelve
+  español (base) + ingles (`_en`); `_zh` queda para un paso posterior.
+- `id` de un hito (sobre los campos base, es decir en español): **mismo algoritmo que `scripts/extract-hitos.mjs` de china-history-api**:
   `sha1("titulo|año|lugar|lat|lng")` en hex, primeros 10 caracteres (ojo: lat antes que lng); si el id ya existe en
   el lote, se recalcula con `base + "|" + salt` (salt 1, 2…). Nunca un UUID. Verificar contra su `hitos.json`.
 - Escritura en `hitos_conocidos`: **upsert por `id`** (`updateOne` con `upsert: true`), NUNCA `deleteMany` sin filtro.
@@ -81,6 +85,10 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   Wikidata/Mapbox exigen provincia esperada, un unico candidato (o todos a <25 km), nombre parecido y, en Mapbox, solo lugares
   (nunca provincia/pais) con relevancia >= 0.8. Se guarda `ubicacionCoincidencia` para auditar. Prueba con el Oxford Handbook
   (pags. 14-45): **15 de 68** chunks localizados (antes 2 con CHGIS+Mapbox); sitios revisados a mano contra coordenadas conocidas.
+  Endurecido tras un aviso de china-history (hitos con 'Reino de Qin' / 'Zhou (principado real)' acabaron en Zhejiang): CHGIS ahora
+  exige provincia y la verifica con geocodificacion inversa (antes 'Qin' casaba con Qin Xian, Zhejiang); Wikidata compara solo la
+  etiqueta (no alias: 'Jin'=Shanxi, 'Qi'=Jinan), nombres cortos exactos, y descarta provincias/estados; los nombres con
+  state/kingdom/dynasty/reino/principado no se geocodifican. 56 tests.
   Sin resolver: Cishan, Miaodigou, Xipo (no estan en Wikidata con coordenadas o no pasan la comprobacion).
 - `write_mongo` escribe con **ReplaceOne** (documento entero), no `$set`: con `$set` una ubicacion vieja sobrevivia al reprocesar.
 - `write_mongo` ya tiene `--replace-source` (borra solo los chunkIndex huérfanos de ese source, tras el upsert) y
@@ -100,6 +108,9 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   que ahora da menos chunks sin dejar `chunkIndex` huérfanos.
 - Base de pruebas `china_documents_dev` tiene 68 chunks de `source: oxford-test` (págs. 14-45 del Oxford Handbook).
 
+- **Reprocesar hitos:** el `id` depende del titulo/lugar que genera el modelo, que varia entre ejecuciones, asi que reprocesar un
+  libro crea ids nuevos y deja los viejos huerfanos. Para limpiar, un `--replace-source` de hitos debe borrar SOLO documentos con
+  una marca propia (p. ej. `origen: "china-documents-reader"`) Y `fuente` del libro, para no tocar nunca los 1259 de china-history.
 - **Mas cobertura de ubicacion:** ampliar `yacimientos.json` de china-history con los sitios que salgan sin resolver, o probar
   otra fuente (p. ej. Nominatim/OSM) si Wikidata se queda corto en otros libros.
 - **Para china-history (verificado en dev):** si prefiltran por caja geografica con un `$and` simple, los chunks SIN ubicacion

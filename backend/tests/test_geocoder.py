@@ -21,14 +21,15 @@ def test_normalize_quita_acentos_y_signos():
 
 def test_chgis_exige_un_unico_candidato_vigente(tmp_path):
     write_chgis(tmp_path, [chgis_item("Yulin Xian", 22.6, 110.1, 100, 900), chgis_item("Yulin Xian", 38.3, 109.7, 100, 900)])
-    assert Geocoder(chgis_dir=tmp_path).geocode("Yulin", None, 200, 300) is None  # ambiguo: dos Yulin
+    geo = Geocoder(chgis_dir=tmp_path, mapbox_token="x", http_get=lambda url: {"features": [{"text": "Guangxi"}]})
+    assert geo.geocode("Yulin", "Guangxi", 200, 300) is None  # ambiguo: dos Yulin vigentes
 
 
 def test_chgis_resuelve_si_no_hay_ambiguedad_y_respeta_el_rango(tmp_path):
     write_chgis(tmp_path, [chgis_item("Qiantang Xian", 30.25, 120.17, -221, 600)])
-    geo = Geocoder(chgis_dir=tmp_path)
-    assert geo.geocode("Qiantang", None, 100, 200).source == "chgis"
-    assert geo.geocode("Qiantang", None, 1200, 1300) is None  # ya no vigente
+    geo = Geocoder(chgis_dir=tmp_path, mapbox_token="x", http_get=lambda url: {"features": [{"text": "Zhejiang"}]})
+    assert geo.geocode("Qiantang", "Zhejiang", 100, 200).source == "chgis"
+    assert geo.geocode("Qiantang", "Zhejiang", 1200, 1300) is None  # ya no vigente
 
 
 def test_lugares_genericos_no_se_geocodifican(tmp_path):
@@ -204,3 +205,45 @@ def test_wikidata_una_estacion_lejana_con_el_mismo_nombre_no_invalida_al_yacimie
     )
     geo = Geocoder(mapbox_token="x", http_get=http).geocode("Liangzhu", "Zhejiang")
     assert (geo.lat, geo.lng) == (30.3967, 119.9853)
+
+
+# ---- Fallos reales vistos con estados/dinastias (aviso de china-history) -------------------------
+
+
+def test_chgis_exige_provincia_y_la_verifica(tmp_path):
+    # "Qin" (el estado, en Shaanxi) casaba con "Qin Xian", un condado de Zhejiang a 1500 km.
+    write_chgis(tmp_path, [chgis_item("Qin Xian", 29.69, 121.55, -221, 600)])
+    in_zhejiang = lambda url: {"features": [{"text": "Zhejiang"}]}
+    geo = Geocoder(chgis_dir=tmp_path, mapbox_token="x", http_get=in_zhejiang)
+    assert geo.geocode("Qin", "Shaanxi", 100, 200) is None  # otra provincia
+    assert geo.geocode("Qin", "Zhejiang", 100, 200).source == "chgis"  # misma provincia: ok
+    assert geo.geocode("Qin", None, 100, 200) is None  # sin provincia no se puede verificar
+
+
+def test_chgis_sin_poder_verificar_la_provincia_se_descarta(tmp_path):
+    write_chgis(tmp_path, [chgis_item("Qin Xian", 29.69, 121.55, -221, 600)])
+    assert Geocoder(chgis_dir=tmp_path).geocode("Qin", "Zhejiang", 100, 200) is None  # sin token de Mapbox
+
+
+def test_estados_y_dinastias_no_son_lugares():
+    boom = lambda url: (_ for _ in ()).throw(AssertionError("no debe consultar"))
+    geo = Geocoder(mapbox_token="x", http_get=boom)
+    for name in ["State of Qin", "Kingdom of Qin", "Reino de Qin", "Qin dynasty", "Zhou royal domain", "Zhou (principado real)"]:
+        assert geo.geocode(name, "Shaanxi") is None, name
+
+
+def test_wikidata_ignora_alias_y_provincias():
+    # "Jin" es alias de la provincia de Shanxi; "Qi" lo es de Jinan. Ninguna es el sitio buscado.
+    province = {"search": [{"id": "Q1", "label": "Shanxi", "description": "province of central China", "match": {"text": "Jin"}}]}
+    city = {"search": [{"id": "Q2", "label": "Jinan", "description": "capital of Shandong province", "match": {"text": "Qi"}}]}
+
+    def http(payload):
+        return lambda url: payload if "wbsearchentities" in url else {"claims": {"P625": [{"mainsnak": {"datavalue": {"value": {"latitude": 37.9, "longitude": 112.5}}}}]}}
+
+    assert Geocoder(mapbox_token="x", http_get=http(province)).geocode("Jin", "Shanxi") is None
+    assert Geocoder(mapbox_token="x", http_get=http(city)).geocode("Qi", "Shandong") is None
+
+
+def test_wikidata_descarta_una_entidad_que_es_un_estado():
+    http = wikidata_http([("Q1", "Zhongshan", "former country", 38.33, 114.29)])
+    assert Geocoder(mapbox_token="x", http_get=http).geocode("Zhongshan", "Hebei") is None

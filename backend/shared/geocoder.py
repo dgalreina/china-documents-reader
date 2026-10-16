@@ -33,7 +33,17 @@ ADMIN_SUFFIXES = {"xian", "zhou", "fu", "jun", "ting", "wei", "dao", "lu", "shen
 # Palabras que el modelo añade al nombre de un sitio ("Erlitou site") y que estorban al comparar.
 GENERIC_WORDS = {"site", "sites", "ruins", "ruin", "city", "culture", "archaeological", "settlement", "the"}
 # "Lugares" que no son un sitio concreto: un punto sería arbitrario.
-GENERIC_PLACE = re.compile(r"^(china|empire|dynasty|kingdom|state of)\b", re.IGNORECASE)
+GENERIC_PLACE = re.compile(r"^(china|empire|dynasty|kingdom|state of|reino|estado|dinast)", re.IGNORECASE)
+# Un estado, reino o dinastía no es un punto en el mapa, aunque su nombre coincida con un pueblo (Qin -> Qin Xian).
+POLITY_WORDS = re.compile(
+    r"\b(state|kingdom|dynasty|empire|principality|royal domain|reino|estado|dinast\w*|principado|imperio)\b", re.IGNORECASE
+)
+# Descripciones de Wikidata que empiezan por una entidad que NO es un lugar concreto (provincia, estado, región...).
+NOT_A_SITE_DESCRIPTION = re.compile(
+    r"^(former |ancient |historical |chinese )*(country|state|kingdom|empire|dynasty|province|autonomous region|region|"
+    r"principality|period|municipality|prefecture)\b",
+    re.IGNORECASE,
+)
 
 # Tipos de resultado de Mapbox aceptables (un lugar concreto). Se excluyen "region" y "country".
 MAPBOX_PLACE_TYPES = {"place", "locality", "district", "neighborhood", "poi"}
@@ -97,6 +107,14 @@ def _site_priority(candidate: dict) -> int:
     if "culture" in candidate.get("label", "").lower():
         return 1
     return 0 if any(word in text for word in SITE_WORDS) else 2
+
+
+def _same_name(site: str, found: str) -> bool:
+    """Como _similar, pero un nombre corto (Qi, Wei, Jin) debe coincidir exacto: contenerlo no basta."""
+    a, b = _site_key(site).replace(" ", ""), _site_key(found).replace(" ", "")
+    if not a or not b:
+        return False
+    return a == b if min(len(a), len(b)) <= 3 else (a in b or b in a)
 
 
 def _in_china(lat: float, lng: float) -> bool:
@@ -209,7 +227,10 @@ class Geocoder:
         lat, lng, name = candidates[0]
         return GeoResult(lat, lng, "curated", name)
 
-    def _from_chgis(self, site: str, year_from: int, year_to: int) -> GeoResult | None:
+    def _from_chgis(self, site: str, year_from: int, year_to: int, province: str | None) -> GeoResult | None:
+        # CHGIS no trae provincia: sin ella (o sin poder verificarla) 'Qin' acaba en un condado Qin de otra provincia.
+        if not province:
+            return None
         key = _strip_admin(normalize(site))
         # Vigente en algún momento del rango del chunk, y un único asentamiento.
         valid = [s for s in self._chgis.get(key, []) if s["begYear"] <= year_to and s["endYear"] >= year_from]
@@ -217,6 +238,9 @@ class Geocoder:
         if len(distinct) != 1:
             return None
         s = valid[0]
+        # El punto debe caer en la provincia esperada (geocodificación inversa); si no se puede comprobar, se descarta.
+        if _province_key(self._province_of(s["lat"], s["lng"]) or "") != _province_key(province):
+            return None
         return GeoResult(s["lat"], s["lng"], "chgis", s["namePy"])
 
     def _from_mapbox(self, site: str, province: str | None) -> GeoResult | None:
@@ -278,8 +302,11 @@ class Geocoder:
         except Exception:  # noqa: BLE001 — red caída o límite: no resuelto
             return None
         # Candidatos con nombre parecido, de los que además hay que confirmar que están en la provincia.
+        # Solo la etiqueta, no los alias: "Jin" es alias de la provincia de Shanxi y "Qi" de la ciudad de Jinan.
         candidates = [
-            c for c in found if _similar(site, c.get("label", "")) or _similar(site, c.get("match", {}).get("text", ""))
+            c
+            for c in found
+            if _same_name(site, c.get("label", "")) and not NOT_A_SITE_DESCRIPTION.match(c.get("description", ""))
         ]
         confirmed = []
         for candidate in candidates:
@@ -318,14 +345,14 @@ class Geocoder:
         self, site: str, province: str | None = None, year_from: int = -221, year_to: int = 1911
     ) -> GeoResult | None:
         site = site.strip()
-        if not site or GENERIC_PLACE.match(site):
+        if not site or GENERIC_PLACE.match(site) or POLITY_WORDS.search(site):
             return None
         cache_key = (site.lower(), (province or "").lower(), year_from, year_to)
         if cache_key in self._cache:
             return self._cache[cache_key]
         result = (
             self._from_curated(site)
-            or self._from_chgis(site, year_from, year_to)
+            or self._from_chgis(site, year_from, year_to, province)
             or self._from_wikidata(site, province)
             or self._from_mapbox(site, province)
         )
