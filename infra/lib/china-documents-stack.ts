@@ -24,6 +24,8 @@ export interface ChinaDocumentsStackProps extends cdk.StackProps {
   ssmPrefix?: string;
   /** Chunks por tanda. Con 100, una tanda tarda 1-2 min y cabe de sobra en los 15 de una Lambda. */
   batchSize?: number;
+  /** Amplitud máxima (años) del rango de un chunk: más ancho va a pendientes (suele ser el alcance de un capítulo, no del fragmento). */
+  maxSpanYears?: number;
 }
 
 export class ChinaDocumentsStack extends cdk.Stack {
@@ -31,6 +33,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     super(scope, id, props);
     const ssmPrefix = props.ssmPrefix ?? '/china-docs';
     const batchSize = props.batchSize ?? 100;
+    const maxSpanYears = props.maxSpanYears ?? 2000;
 
     // ---------------------------------------------------------------------------------------------------- almacenamiento
     // Los PDFs subidos y los ficheros intermedios de cada trabajo (jobs/<id>/...). Todo se borra solo a los 30 días.
@@ -78,6 +81,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       JOBS_TABLE: jobs.tableName,
       UPLOAD_BUCKET: dataBucket.bucketName,
       MONGO_TARGET: props.mongoTarget, // dev o prod lo decide SOLO el despliegue, nunca el evento
+      MAX_SPAN_YEARS: String(maxSpanYears),
     };
     const fn = (name: string, handler: string, timeoutSeconds: number, memoryMb: number) =>
       new lambda.Function(this, name, {

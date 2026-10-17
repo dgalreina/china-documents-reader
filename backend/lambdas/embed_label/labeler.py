@@ -11,6 +11,7 @@ etiqueta fiable NO se escribe en book_chunks (contrato con china-history), así
 que preferimos un pendiente a un año inventado.
 """
 
+import os
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -118,6 +119,21 @@ def valid_range(ano_inicio: int | None, ano_fin: int | None) -> YearRange | None
 # del documento es largo (en un libro sobre una sola dinastía, todo cae dentro).
 WIDE_SPAN_MIN_YEARS = 500
 WIDE_COVERAGE = 0.9
+
+
+# Un rango muy ancho (p. ej. -6000..-2000) suele ser el alcance de un capítulo entero, no del fragmento: solapa con casi cualquier
+# consulta de esa época y mete ruido en la búsqueda. Un rango ancho NO excluye el chunk de las consultas (el filtro es por solapamiento),
+# pero uno estrecho y equivocado sí: por eso se manda a pendientes en vez de guardarlo.
+DEFAULT_MAX_SPAN_YEARS = 2000
+
+
+def max_span_years() -> int:
+    """Amplitud máxima (en años) de un rango guardable. Configurable con la variable de entorno MAX_SPAN_YEARS (en la Lambda, la fija el CDK)."""
+    return int(os.environ.get("MAX_SPAN_YEARS", DEFAULT_MAX_SPAN_YEARS))
+
+
+def is_too_wide(rng: YearRange) -> bool:
+    return rng.ano_fin - rng.ano_inicio > max_span_years()
 
 
 def is_uninformative(rng: YearRange, period: DocumentPeriod | None) -> bool:

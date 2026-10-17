@@ -27,6 +27,7 @@ El login en la web **no** protege la API por sí solo (cualquiera podría llamar
 ## Antes de desplegar (lo haces tú)
 
 El destino de escritura en Mongo es **dev por defecto** (`MONGO_TARGET`). Producción solo con `-c mongoTarget=prod`, a propósito.
+Otro parámetro del despliegue: `-c maxSpanYears=2000` (por defecto 2000): un chunk con un rango de años más ancho no se guarda y queda como pendiente.
 
 1. **Secretos en SSM Parameter Store**, tipo *SecureString*. Hazlo desde la consola de AWS (Systems Manager → Parameter Store → Crear
    parámetro) y no desde la terminal, para que no queden en el historial de comandos:

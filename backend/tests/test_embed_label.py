@@ -126,3 +126,36 @@ def test_ubicacion_resuelta_se_guarda_en_geojson_lng_lat(tmp_path):
     assert doc["ubicacion"] == {"type": "Point", "coordinates": [112.7, 34.7]}  # [lng, lat]
     assert (doc["lat"], doc["lng"]) == (34.7, 112.7)
     assert doc["ubicacionFuente"] == "curated" and doc["ubicacionNombre"] == "Erlitou site"
+
+
+def test_un_rango_de_mas_de_2000_anios_va_a_pendientes_con_su_motivo():
+    # Los casos reales de las introducciones de capítulo del Oxford Handbook: -6000..-2000 (4000 años) y -6550..-1500 (5050).
+    client = FakeClient({0: (-6000, -2000), 1: (-6550, -1500), 2: (-3000, -1600), 3: (-221, -206)})
+    result = embed_and_label(make_chunks(4), client=client, label_model="fake", geocoder=Geocoder())
+    assert [d["chunkIndex"] for d in result.ready] == [2, 3]
+    assert {d["chunkIndex"]: d["reason"] for d in result.pending} == {0: "rango_demasiado_ancho", 1: "rango_demasiado_ancho"}
+    assert client.embedded == ["2", "3"]  # y no se pagan sus embeddings
+
+
+def test_el_tope_es_exacto_y_configurable(monkeypatch):
+    from lambdas.embed_label.labeler import YearRange, is_too_wide, max_span_years
+
+    monkeypatch.delenv("MAX_SPAN_YEARS", raising=False)
+    assert max_span_years() == 2000
+    assert not is_too_wide(YearRange(-2000, 0))  # justo 2000: se acepta
+    assert is_too_wide(YearRange(-2001, 0))
+    monkeypatch.setenv("MAX_SPAN_YEARS", "500")
+    assert is_too_wide(YearRange(100, 700)) and not is_too_wide(YearRange(100, 600))
+
+
+def test_un_rango_igual_a_todo_el_libro_y_ademas_ancho_se_explica_por_lo_primero():
+    # El mismo chunk cumple las dos reglas (cubre el libro entero y supera 2000 años): el motivo es el del periodo del libro.
+    libro_largo = DocumentPeriod(resumen="x", ano_inicio=-5000, ano_fin=-250)
+    client = FakeClient({0: (-5000, -250), 1: (-6000, -2000)})
+    result = embed_and_label(
+        make_chunks(2), client=client, label_model="fake", geocoder=Geocoder(), document_period=libro_largo, infer_period=False
+    )
+    assert {d["chunkIndex"]: d["reason"] for d in result.pending} == {
+        0: "rango_igual_al_periodo_del_documento",  # cubre el 100 % del libro
+        1: "rango_demasiado_ancho",  # 4000 años pero solo el 63 % del libro: no lo atrapa el filtro anterior
+    }

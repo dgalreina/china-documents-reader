@@ -169,12 +169,12 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
 
 ## Ideas apuntadas (sin implementar)
 
-- **Tope de amplitud del rango de años.** En la prueba con el Oxford Handbook (págs. 14-45, `gpt-4o`), mediana de 1000
-  años por chunk; 7 de 68 chunks tenían 4000-5000 años (introducciones de capítulo: es el alcance del capítulo, no del
-  fragmento) y meten ruido en las búsquedas. Propuesta: parámetro `MAX_SPAN_YEARS` (≈2000; con 1500 caerían 10 chunks
-  más) y mandar los que lo superen a pendientes con motivo `rango_demasiado_ancho`. Un rango ancho no excluye el chunk
-  (el filtro de china-history es por solapamiento), solo añade ruido; uno estrecho pero equivocado sí lo excluye de
-  las consultas correctas. Decidir el valor tras probar con más libros.
+- **Tope de amplitud del rango de anios (HECHO):** un rango de mas de `MAX_SPAN_YEARS` (2000 por defecto, configurable por entorno) va a
+  pendientes con motivo `rango_demasiado_ancho` y no se pagan sus embeddings. Motivo: en la prueba con el Oxford Handbook 7 de 68 chunks
+  tenian 3000-5050 anios (introducciones de capitulo: es el alcance del capitulo, no del fragmento) y metian ruido; el filtro anterior
+  (`rango_igual_al_periodo_del_documento`, >= 90 % del periodo del libro) NO los atrapaba porque cubren solo ~63 %. Un rango ancho no excluye
+  el chunk de las consultas (el filtro de china-history es por solapamiento): es ruido; uno estrecho pero equivocado si lo excluiria.
+  Los 7 chunks de dev (`oxford-test`) se escribieron antes del tope y siguen ahi hasta reprocesar el libro.
 - `--replace-source` en `write_mongo` (borrar solo `{source: slug}`, con confirmación en prod) para reprocesar un PDF
   que ahora da menos chunks sin dejar `chunkIndex` huérfanos.
 - Base de pruebas `china_documents_dev` tiene 68 chunks de `source: oxford-test` (págs. 14-45 del Oxford Handbook).

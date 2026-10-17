@@ -20,7 +20,7 @@ from shared.usage import TRACKER, TrackedClient
 
 from ..extract_chunk.chunker import Chunk
 from .embedder import EMBEDDING_MODEL, embed_texts
-from .labeler import DocumentPeriod, infer_document_period, is_uninformative, label_chunks
+from .labeler import DocumentPeriod, infer_document_period, is_too_wide, is_uninformative, label_chunks
 
 # Modelo para etiquetar años. gpt-4o-mini se equivocaba con seguridad en culturas poco
 # conocidas (Laoguantai -3000..-2000 en vez de ~-6000..-5000); gpt-4o acierta mucho más
@@ -85,6 +85,9 @@ def embed_and_label(
         if label is not None and is_uninformative(label.years, result.document_period):
             labels[i] = None
             reasons[i] = "rango_igual_al_periodo_del_documento"
+        elif label is not None and is_too_wide(label.years):
+            labels[i] = None  # alcance de un capítulo, no del fragmento: ruido en la búsqueda
+            reasons[i] = "rango_demasiado_ancho"
 
     # Solo se pagan embeddings de los chunks que van a guardarse.
     labeled = [(c, lab) for c, lab in zip(chunks, labels) if lab is not None]
