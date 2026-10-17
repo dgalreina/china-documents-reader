@@ -154,3 +154,79 @@ def test_evidencia_tolera_guiones_de_maquetacion_del_pdf():
 
     assert evidence_is_valid("The cul- tural centre was in Luoyang", ["Luoyang"], "The cultural centre was in Luoyang today")
     assert evidence_is_valid("moved the capital to Haojing city", ["Hao"], "they moved the capital to Haojing city then")
+
+
+# ---- personajes: solo lo que se puede comprobar en el texto -----------------------------------------
+
+from lambdas.extract_hitos.extractor import ExtractedPersonaje, clean_personaje  # noqa: E402
+
+HITO_TEXTS = {
+    "es": "Batalla de Muye. El rey Wu dirigió el ataque final.",
+    "en": "Battle of Muye. King Wu led the final attack.",
+    "zh": "牧野之战。武王率领最后的进攻。",
+}
+SOURCE = "Next time, Fa gathered his allies at the Muye field and led them in the final attack."
+
+
+def persona(**over):
+    base = dict(
+        en_el_texto="Fa", nombre="Rey Wu de Zhou", nombre_en="King Wu of Zhou", nombre_zh="周武王", alias=["Ji Fa", "武王"],
+        rol="líder de la conquista", rol_en="leader of the conquest", rol_zh="征服的领导者",
+        mencion_es="rey Wu", mencion_en="King Wu", mencion_zh="武王", nacimiento=None, muerte=-1043,
+        estado="Zhou Occidental", estado_en="Western Zhou", estado_zh="西周",
+        descripcion="Fundador de la dinastía Zhou.", descripcion_en="Founder of the Zhou dynasty.", descripcion_zh="周朝的创立者。",
+    )
+    return ExtractedPersonaje(**{**base, **over})
+
+
+def test_personaje_valido_conserva_menciones_alias_y_chino():
+    clean, reason = clean_personaje(persona(), HITO_TEXTS, SOURCE)
+    assert reason is None and clean["menciones"] == {"es": "rey Wu", "en": "King Wu", "zh": "武王"}
+    assert "Fa" in clean["alias"] and "Ji Fa" in clean["alias"] and clean["muerte"] == -1043
+
+
+def test_personaje_que_no_esta_en_el_texto_original_se_descarta():
+    # Anti-invención: "Duke of Zhou" no aparece en el texto de los fragmentos.
+    clean, reason = clean_personaje(persona(en_el_texto="Duke of Zhou"), HITO_TEXTS, SOURCE)
+    assert clean is None and reason == "personaje_no_esta_en_el_texto"
+
+
+def test_la_mencion_se_busca_en_el_texto_con_los_alias_no_se_fia_del_modelo():
+    # El modelo dijo "周武王" (que no está en el texto zh) pero el alias "武王" sí: se enlaza con el texto real.
+    clean, _ = clean_personaje(persona(mencion_zh="周武王", mencion_en="Wu the king"), HITO_TEXTS, SOURCE)
+    assert clean["menciones"] == {"es": "rey Wu", "en": "King Wu", "zh": "武王"}  # el sufijo "de Zhou" se quita
+
+
+def test_el_nombre_tal_como_esta_en_el_texto_enlaza_aunque_el_hito_use_otro():
+    # El hito dice "Fa" y el modelo lo llamó "King Wu": se enlaza "Fa", la forma que de verdad está escrita.
+    texts = {"es": "Fa dirigió el ataque.", "en": "Fa led the attack.", "zh": "武王发起进攻。"}
+    clean, _ = clean_personaje(persona(), texts, SOURCE)
+    assert clean["menciones"]["en"] == "Fa" and clean["menciones"]["es"] == "Fa"
+
+
+def test_un_alias_corto_no_casa_dentro_de_otro_nombre():
+    texts = {"es": "El gobernador de Wuhan atacó.", "en": "The governor of Wuhan attacked.", "zh": ""}
+    clean, reason = clean_personaje(persona(en_el_texto="Fa", alias=["Wu"], nombre="Rey Wu", nombre_en="King Wu", nombre_zh=None), texts, SOURCE)
+    assert clean is None and reason == "personaje_sin_mencion_enlazable"
+
+
+def test_sin_ninguna_mencion_enlazable_se_descarta():
+    texts = {"es": "Batalla de Muye.", "en": "Battle of Muye.", "zh": "牧野之战。"}
+    clean, reason = clean_personaje(persona(), texts, SOURCE)
+    assert clean is None and reason == "personaje_sin_mencion_enlazable"
+
+
+def test_fechas_incoherentes_y_chino_sin_caracteres_se_anulan():
+    clean, _ = clean_personaje(persona(nacimiento=-1000, muerte=-1100, nombre_zh="King Wu", rol_zh="leader"), HITO_TEXTS, SOURCE)
+    assert clean["nacimiento"] is None and clean["muerte"] is None  # nacimiento posterior a la muerte
+    assert clean["nombre_zh"] is None and clean["rol_zh"] is None
+
+
+def test_el_hito_trae_sus_personajes_validados_en__personajes():
+    texts_hito = hito(
+        titulo="Batalla de Muye", descripcion="El rey Wu dirigió el ataque final.", titulo_en="Battle of Muye",
+        descripcion_en="King Wu led the final attack.", titulo_zh="牧野之战", descripcion_zh="武王率领最后的进攻。",
+        evidencia="The court moved to Luoyang after the invasion.", personajes=[persona(en_el_texto="Luoyang")],
+    )
+    (h,) = run([texts_hito]).hitos
+    assert [p["nombre_en"] for p in h["_personajes"]] == ["King Wu of Zhou"]

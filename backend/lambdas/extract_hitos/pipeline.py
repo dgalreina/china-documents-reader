@@ -13,7 +13,7 @@ from openai import OpenAI
 from shared.geocoder import Geocoder, normalize
 
 from ..embed_label.pipeline import make_client
-from .extractor import ExtractedHito, evidence_is_valid, extract_group, has_cjk, year_in_range
+from .extractor import ExtractedHito, clean_personaje, evidence_is_valid, extract_group, has_cjk, year_in_range
 from .ids import hito_id
 
 DEFAULT_HITOS_MODEL = "gpt-4o"
@@ -118,6 +118,20 @@ def extract_hitos(
                     doc[key] = value
                 else:
                     result.stats["zh_descartado"] += 1
+            # Personajes: solo los comprobables en el texto. Aún sin resolver (el paso siguiente los une con las fichas).
+            texts = {
+                "es": f"{hito.titulo} {hito.descripcion}",
+                "en": f"{hito.titulo_en} {hito.descripcion_en}",
+                "zh": f"{hito.titulo_zh} {hito.descripcion_zh}",
+            }
+            doc["_personajes"] = []
+            for person in hito.personajes:
+                clean, reason = clean_personaje(person, texts, group_text)
+                if clean is None:
+                    result.stats[reason] += 1
+                else:
+                    doc["_personajes"].append(clean)
+                    result.stats["personajes"] += 1
             result.hitos.append(doc)
             result.stats[f"geo_{geo.source}"] += 1
     result.stats["guardables"] = len(result.hitos)

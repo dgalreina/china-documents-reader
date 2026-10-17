@@ -104,6 +104,28 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
 - Pendiente, en este orden: `presign` → infra CDK →
   UI de subida/hitos → agente `ask` → CI/CD. Ver `README.md` y `backend/README.md`.
 
+## Personajes (diseño acordado con el usuario; en curso)
+
+Objetivo: una lista de personajes enlazada con los hitos. Pinchar un nombre en un texto abre su ficha; dado un personaje, salen todos
+sus hitos. **Cambia el contrato con china-history** (hasta ahora solo `book_chunks` y `hitos_conocidos`): china-history no tiene el
+concepto y su agente debe construir el lado lectura (schema, endpoints, enlaces en la UI). Propuesta que se le pasó:
+- Colección `personajes`: `id` (estable, se asigna al crear y no se recalcula), `nombre`/`nombre_en`/`nombre_zh`, `aliases` {es,en,zh},
+  `nacimiento?`/`muerte?`, `rol`, `estado` (dinastía/estado), `descripcion` (+`_en`/`_zh`), `fuente`, `origen`.
+- `hitos_conocidos.personajes`: array opcional `[{ id, rol, menciones: {es, en, zh} }]`, con índice en `personajes.id`. `menciones` es el
+  texto exacto con el que el personaje aparece en titulo/descripcion de ESE hito en cada idioma (la web lo convierte en enlace sin
+  ambigüedad entre los muchos "rey Wu"). china-history no se rompe: reconstruye el hito con campos explícitos e ignora los extra.
+- Los 1259 hitos existentes no tienen personajes; si el usuario los reconstruye algún día con este método (es caro), nacerán con ellos.
+
+Decisiones: solo personajes que intervienen en algún hito (no cualquier persona del texto); `_zh` opcional (los nombres propios en
+chino fallan a veces); unir identidades de forma CONSERVADORA (alias en común + época compatible + juez; ante la duda, ficha separada,
+porque mezclar dos personas distintas es peor que partir una en dos).
+
+Estado: **paso 2 hecho** (la extracción de hitos devuelve `_personajes` validados por hito; los campos con `_` no se escriben en Mongo).
+Validación en código: el nombre debe estar en el texto original (anti-invención) y la mención se BUSCA en código (la forma más larga
+de nombre/alias que esté literal en el texto del hito en cada idioma, con límites de palabra; no se fía de la que da el modelo, que no
+solía coincidir). **Pendiente (paso 3, esperar OK):** resolución de identidad contra la colección `personajes` de la base de destino,
+escritura de fichas y de `personajes` en el hito, `write_mongo --kind personajes`, primero en dev.
+
 ## Ideas apuntadas (sin implementar)
 
 - **Tope de amplitud del rango de años.** En la prueba con el Oxford Handbook (págs. 14-45, `gpt-4o`), mediana de 1000
