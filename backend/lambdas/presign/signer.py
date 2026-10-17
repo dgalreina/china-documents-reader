@@ -56,3 +56,28 @@ def create_upload(s3_client, bucket: str, filename: object) -> dict:
         ExpiresIn=URL_TTL_SECONDS,
     )
     return {"jobId": job_id, "key": key, "maxBytes": limit, "expiresInSeconds": URL_TTL_SECONDS, "upload": post}
+
+
+SOURCE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,59}$")
+
+
+def slugify(text: str) -> str:
+    """'Historia de China (2ª ed.)' -> 'historia-de-china-2a-ed': minúsculas, sin acentos, solo letras, números y guiones."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-")[:60].strip("-")
+
+
+def resolve_source(source: object, filename: object) -> str:
+    """El slug del libro: el que pida el usuario (validado) o, si no, uno derivado del nombre del archivo."""
+    if source is not None:
+        if not isinstance(source, str) or not SOURCE_PATTERN.match(source):
+            raise InvalidUpload("source debe ser un slug: minúsculas, números y guiones (2 a 60 caracteres).")
+        return source
+    safe_filename(filename)  # valida que sea un nombre .pdf
+    # Del nombre ORIGINAL, no del saneado: un nombre sin letras latinas queda como 'documento', un slug genérico donde dos libros
+    # distintos chocarían (y un reemplazo borraría el otro). Mejor pedir el slug a mano.
+    base = re.split(r"[\/]", filename.strip())[-1][:-4]
+    derived = slugify(base)
+    if not SOURCE_PATTERN.match(derived):
+        raise InvalidUpload("No se pudo derivar un slug del nombre del archivo: indica 'source' a mano.")
+    return derived

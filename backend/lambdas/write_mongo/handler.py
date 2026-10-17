@@ -53,3 +53,40 @@ def cleanup_handler(event: dict, _context=None) -> dict:
     if not event.get("replaceSource"):
         return {"jobId": event["jobId"], "limpieza": "no solicitada"}
     return {"jobId": event["jobId"], **cleanup_old_runs(_target(), event["source"], event["jobId"])}
+
+
+def _sum_counts(items: list[dict], key: str) -> int:
+    return sum(int(item.get(key, 0) or 0) for item in items)
+
+
+def finalize_handler(event: dict, _context=None) -> dict:
+    """Último paso: suma los recuentos y el coste de TODAS las tandas y, si es un reproceso, borra lo de ejecuciones anteriores.
+
+    event = {"jobId", "source", "replaceSource"?, "period"?, "embedResults": [...], "hitosResults": [...], "writeResults": [...]}
+    Devuelve un resumen pequeño que Step Functions guarda en DynamoDB (estado DONE).
+    """
+    embed, extracted, written = event.get("embedResults", []), event.get("hitosResults", []), event.get("writeResults", [])
+    usages = [r.get("usage", {}) for r in [event.get("period") or {}, *embed, *extracted, *written]]
+    cost = round(sum(float(u.get("estimatedCostUsd", 0) or 0) for u in usages), 4)
+    unknown = sorted({m for u in usages for m in u.get("unknownModels", [])})
+
+    people: dict[str, int] = {}
+    for item in written:
+        for name, count in (item.get("personajes") or {}).items():
+            people[name] = people.get(name, 0) + int(count)
+
+    summary = {
+        "jobId": event["jobId"],
+        "chunks": _sum_counts(embed, "chunks"),
+        "chunksListos": _sum_counts(embed, "ready"),
+        "chunksPendientes": _sum_counts(embed, "pending"),
+        "chunksConUbicacion": _sum_counts(embed, "located"),
+        "hitosExtraidos": _sum_counts(extracted, "hitos"),
+        "hitosEscritos": _sum_counts(written, "hitosEscritos"),
+        "duplicadosDescartados": _sum_counts(written, "duplicadosDescartados"),
+        "personajes": people,
+        "costeEstimadoUsd": cost,
+        "modelosSinPrecio": unknown,
+        "limpieza": cleanup_handler({"jobId": event["jobId"], "source": event["source"], "replaceSource": event.get("replaceSource")}),
+    }
+    return summary

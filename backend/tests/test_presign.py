@@ -2,11 +2,20 @@
 
 import base64
 import json
+import time
 
 import pytest
 
 from lambdas.presign.handler import handler
 from lambdas.presign.signer import InvalidUpload, create_upload, max_bytes, safe_filename
+
+
+class FakeTable:
+    def __init__(self):
+        self.items = []
+
+    def put_item(self, Item):
+        self.items.append(Item)
 
 
 class FakeS3:
@@ -73,7 +82,7 @@ def test_el_limite_de_tamano_se_configura_por_entorno(monkeypatch):
 
 
 def test_handler_responde_200_con_lo_que_necesita_el_navegador():
-    response = handler(event({"filename": "libro.pdf"}), s3_client=FakeS3())
+    response = handler(event({"filename": "libro.pdf"}), s3_client=FakeS3(), jobs_table=FakeTable())
     body = json.loads(response["body"])
     assert response["statusCode"] == 200 and response["headers"]["Content-Type"] == "application/json"
     assert {"jobId", "key", "maxBytes", "upload"} <= body.keys() and {"url", "fields"} <= body["upload"].keys()
@@ -81,7 +90,7 @@ def test_handler_responde_200_con_lo_que_necesita_el_navegador():
 
 def test_handler_acepta_cuerpo_en_base64():
     raw = base64.b64encode(json.dumps({"filename": "libro.pdf"}).encode()).decode()
-    assert handler(event(raw, isBase64Encoded=True), s3_client=FakeS3())["statusCode"] == 200
+    assert handler(event(raw, isBase64Encoded=True), s3_client=FakeS3(), jobs_table=FakeTable())["statusCode"] == 200
 
 
 @pytest.mark.parametrize(
@@ -95,11 +104,44 @@ def test_handler_acepta_cuerpo_en_base64():
     ],
 )
 def test_handler_responde_400_con_un_mensaje_claro(ev):
-    response = handler(ev, s3_client=FakeS3())
+    response = handler(ev, s3_client=FakeS3(), jobs_table=FakeTable())
     assert response["statusCode"] == 400 and json.loads(response["body"])["error"]
 
 
 def test_handler_no_firma_nada_si_la_peticion_no_es_valida():
     s3 = FakeS3()
-    handler(event({"filename": "libro.exe"}), s3_client=s3)
-    assert s3.calls == []
+    table = FakeTable()
+    handler(event({"filename": "libro.exe"}), s3_client=s3, jobs_table=table)
+    assert s3.calls == [] and table.items == []  # nada firmado y nada registrado
+
+
+# ---- registro del trabajo en DynamoDB y slug del libro -----------------------------------------------
+
+
+def test_el_handler_apunta_el_trabajo_antes_de_devolver_la_url():
+    table = FakeTable()
+    response = handler(event({"filename": "Historia de China (2ª ed.).pdf"}), s3_client=FakeS3(), jobs_table=table)
+    body = json.loads(response["body"])
+    (item,) = table.items
+    assert item["jobId"] == body["jobId"] and item["status"] == "UPLOADING" and item["replaceSource"] is False
+    assert item["source"] == "historia-de-china-2a-ed" == body["source"]  # derivado del nombre del archivo
+    assert item["filename"] == "Historia de China (2ª ed.).pdf" and item["expiresAt"] > time.time() + 29 * 86400  # caduca en ~30 días
+
+
+def test_el_usuario_puede_fijar_el_slug_y_pedir_reemplazo():
+    table = FakeTable()
+    handler(event({"filename": "x.pdf", "source": "oxford-handbook", "replaceSource": True}), s3_client=FakeS3(), jobs_table=table)
+    assert table.items[0]["source"] == "oxford-handbook" and table.items[0]["replaceSource"] is True
+
+
+@pytest.mark.parametrize("extra", [{"source": "Con Mayúsculas"}, {"source": "a"}, {"source": "../x"}, {"source": 5}, {"replaceSource": "si"}])
+def test_slug_o_reemplazo_invalidos_dan_400_y_no_registran_nada(extra):
+    table = FakeTable()
+    response = handler(event({"filename": "x.pdf", **extra}), s3_client=FakeS3(), jobs_table=table)
+    assert response["statusCode"] == 400 and table.items == []
+
+
+def test_sin_slug_derivable_pide_indicarlo():
+    table = FakeTable()
+    response = handler(event({"filename": "中国历史.pdf"}), s3_client=FakeS3(), jobs_table=table)  # sin letras latinas
+    assert response["statusCode"] == 400 and "source" in json.loads(response["body"])["error"]

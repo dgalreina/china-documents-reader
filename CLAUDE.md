@@ -131,6 +131,15 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   **NO aceptar el MCP de AWS que ofrece `aws login`** sin decidirlo (da a un agente acceso a la cuenta con AdministratorAccess).
 - Pendiente, en este orden: diseno de la infra CDK (esperar OK del usuario) → UI de subida/hitos → agente `ask` → CI/CD.
   Ver `README.md` y `backend/README.md`.
+  **CDK escrito y validado, SIN desplegar** (`infra/`, ver `infra/README.md`): stack unico en eu-west-1 con 2 buckets, DynamoDB, 9 Lambdas
+  (un paquete: `npm run build:lambda` instala dependencias de Linux con pip, sin Docker), Step Functions Standard con Map (5 en paralelo
+  para etiquetar y extraer; 1 para escribir hitos), EventBridge (PDF en uploads/ arranca el flujo), Cognito (un usuario, sin registro
+  abierto) y API Gateway con autorizador JWT + limite de 2 peticiones/s. Validado: `tsc`, `cdk synth`, un comprobador estructural del ASL y la
+  API `aws stepfunctions test-state` del servicio real para `ParseUpload`, `MakeBatches` (2171 chunks -> 22 tandas, sin tanda vacia) y el
+  Choice de PDF escaneado. Fallo corregido antes de desplegar: tres tareas tenian `Parameters: "$"` (invalido); ahora cargas explicitas.
+  Lo que NO se ha probado: una ejecucion real en AWS. Antes de desplegar el usuario debe: crear los parametros SSM (OPENAI_API_KEY,
+  MONGODB_URI_DEV, MAPBOX_TOKEN), permitir 0.0.0.0/0 en Atlas, y hacer `cdk bootstrap`. Despues: subir los datos geograficos al bucket
+  y crear su usuario de Cognito.
   Decisiones tomadas para la infra: Standard Workflow con Map (max. 5 en paralelo) y 'redrive' para reanudar; secretos en SSM Parameter
   Store; Atlas con allowlist 0.0.0.0/0 (M0 no tiene conexion privada) y credenciales fuertes; destino dev por defecto (`MONGO_TARGET`);
   proteger la API con **login en el front (Cognito, un solo usuario, sin registro abierto) y autorizador JWT en API Gateway**, mas

@@ -26,12 +26,19 @@ def period_handler(event: dict, _context=None, storage: Storage | None = None, c
     """event = {"jobId", "bucket", "chunksKey"}  ->  {"jobId", "bucket", "periodKey", "period": {...} | None}"""
     storage = storage or S3Storage()
     job_id, bucket = event["jobId"], event["bucket"]
+    TRACKER.reset()
     chunks = _read_chunks(storage, bucket, event["chunksKey"])
     model = os.environ.get("LABEL_MODEL", DEFAULT_LABEL_MODEL)
     period = infer_period_from_chunks(chunks, client or make_client(), model)
     period_key = f"jobs/{job_id}/period.json"
     storage.put_json(bucket, period_key, period.model_dump() if period else None)
-    return {"jobId": job_id, "bucket": bucket, "periodKey": period_key, "period": period.model_dump() if period else None}
+    return {
+        "jobId": job_id,
+        "bucket": bucket,
+        "periodKey": period_key,
+        "period": period.model_dump() if period else None,
+        "usage": TRACKER.summary(),
+    }
 
 
 def handler(event: dict, _context=None, storage: Storage | None = None, client=None, geocoder=None) -> dict:

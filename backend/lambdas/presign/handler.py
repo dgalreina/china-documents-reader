@@ -1,16 +1,23 @@
-"""Punto de entrada de AWS Lambda detrás de API Gateway (HTTP API): POST /uploads  {"filename": "libro.pdf"}
+"""Punto de entrada de AWS Lambda detrás de API Gateway (HTTP API): POST /uploads  {"filename": "libro.pdf", "source"?, "replaceSource"?}
 
-Responde en el formato que espera API Gateway: {"statusCode", "headers", "body"}. El bucket viene de la variable de entorno
-UPLOAD_BUCKET, que pondrá el CDK. Los permisos de CORS (qué web puede llamar) se configuran en API Gateway, no aquí.
+Hace dos cosas: (1) firma un permiso temporal para subir el PDF a S3 y (2) APUNTA EL TRABAJO en DynamoDB (estado UPLOADING, nombre del
+libro, si es un reproceso). Cuando el PDF llegue a S3, Step Functions arranca solo y lee ese registro: así el `source` y el reemplazo
+no tienen que viajar dentro del propio fichero.
+
+Responde en el formato que espera API Gateway: {"statusCode", "headers", "body"}. Los nombres de bucket y tabla vienen de variables de
+entorno que pone el CDK (UPLOAD_BUCKET, JOBS_TABLE). El CORS y el login (Cognito) se configuran en API Gateway, no aquí.
 """
 
 import base64
 import json
 import os
+import time
+from datetime import datetime, timezone
 
-from .signer import InvalidUpload, create_upload
+from .signer import InvalidUpload, create_upload, resolve_source
 
 HEADERS = {"Content-Type": "application/json"}
+JOB_TTL_DAYS = 30  # DynamoDB borra el registro solo tras este tiempo (atributo expiresAt)
 
 
 def _response(status: int, body: dict) -> dict:
@@ -40,10 +47,34 @@ def _s3_client():
     return boto3.client("s3", config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}))
 
 
-def handler(event: dict, _context=None, s3_client=None) -> dict:
+def _jobs_table():
+    import boto3
+
+    return boto3.resource("dynamodb").Table(os.environ["JOBS_TABLE"])
+
+
+def handler(event: dict, _context=None, s3_client=None, jobs_table=None) -> dict:
     try:
-        filename = _parse_body(event).get("filename")
-        bucket = os.environ["UPLOAD_BUCKET"]
-        return _response(200, create_upload(s3_client or _s3_client(), bucket, filename))
+        data = _parse_body(event)
+        filename = data.get("filename")
+        source = resolve_source(data.get("source"), filename)
+        replace_source = data.get("replaceSource", False)
+        if not isinstance(replace_source, bool):
+            raise InvalidUpload("replaceSource debe ser true o false.")
+
+        upload = create_upload(s3_client or _s3_client(), os.environ["UPLOAD_BUCKET"], filename)
+        # Se apunta el trabajo ANTES de devolver la URL: si el PDF llegara a S3 sin registro, el flujo no sabría de qué libro es.
+        (jobs_table or _jobs_table()).put_item(
+            Item={
+                "jobId": upload["jobId"],
+                "status": "UPLOADING",
+                "filename": filename,
+                "source": source,
+                "replaceSource": replace_source,
+                "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "expiresAt": int(time.time()) + JOB_TTL_DAYS * 86400,
+            }
+        )
+        return _response(200, {**upload, "source": source, "replaceSource": replace_source})
     except InvalidUpload as err:
         return _response(400, {"error": str(err)})

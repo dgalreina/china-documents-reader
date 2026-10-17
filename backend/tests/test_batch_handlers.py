@@ -83,3 +83,38 @@ def test_ningun_handler_de_escritura_lee_el_destino_del_evento():
 
     source = inspect.getsource(wh)
     assert 'event["target"]' not in source and 'event.get("target")' not in source
+
+
+# ---- finalize ------------------------------------------------------------------------------------------
+
+
+def usage(cost, unknown=()):
+    return {"estimatedCostUsd": cost, "unknownModels": list(unknown)}
+
+
+def test_finalize_suma_recuentos_costes_y_personajes_de_todas_las_tandas(mongo):
+    event = {
+        "jobId": "j1", "source": "libro", "replaceSource": True,
+        "period": {"usage": usage(0.01)},
+        "embedResults": [
+            {"chunks": 100, "ready": 60, "pending": 40, "located": 8, "usage": usage(0.05)},
+            {"chunks": 58, "ready": 40, "pending": 18, "located": 5, "usage": usage(0.03)},
+        ],
+        "hitosResults": [{"hitos": 5, "usage": usage(0.07)}, {"hitos": 2, "usage": usage(0.04, ["modelo-raro"])}],
+        "writeResults": [
+            {"hitosEscritos": 3, "duplicadosDescartados": 2, "personajes": {"personajes_nuevos": 2}, "usage": usage(0.02)},
+            {"hitosEscritos": 1, "duplicadosDescartados": 1, "personajes": {"personajes_nuevos": 1, "personajes_unidos": 3}, "usage": usage(0.01)},
+        ],
+    }
+    out = wh.finalize_handler(event)
+    assert (out["chunks"], out["chunksListos"], out["chunksPendientes"], out["chunksConUbicacion"]) == (158, 100, 58, 13)
+    assert (out["hitosExtraidos"], out["hitosEscritos"], out["duplicadosDescartados"]) == (7, 4, 3)
+    assert out["personajes"] == {"personajes_nuevos": 3, "personajes_unidos": 3}
+    assert out["costeEstimadoUsd"] == pytest.approx(0.23) and out["modelosSinPrecio"] == ["modelo-raro"]
+    assert out["limpieza"]["chunksBorrados"] == 1 and mongo == [("cleanup", "libro", "j1")]  # reproceso: se limpia
+    assert len(json.dumps(out)) < 2000
+
+
+def test_finalize_sin_reemplazo_no_borra_nada(mongo):
+    out = wh.finalize_handler({"jobId": "j1", "source": "libro", "embedResults": [], "hitosResults": [], "writeResults": []})
+    assert out["limpieza"]["limpieza"] == "no solicitada" and mongo == [] and out["costeEstimadoUsd"] == 0
