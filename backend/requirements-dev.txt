@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest>=8.0
+boto3>=1.40  # ya viene en el runtime de Lambda: solo se necesita en local
+botocore[crt]>=1.40  # necesario en local para las credenciales de `aws login`
+reportlab>=4.0  # genera PDFs de prueba en los tests

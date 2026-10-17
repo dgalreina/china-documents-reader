@@ -4,8 +4,8 @@ Python. Cada paso del análisis es una Lambda independiente en `lambdas/`.
 
 | Lambda | Qué hace | Estado |
 |---|---|---|
-| `presign` | Devuelve la URL prefirmada para subir el PDF a S3 | pendiente |
-| `extract_chunk` | Extrae texto por páginas y trocea en chunks | hecho (lógica) |
+| `presign` | Devuelve la URL prefirmada para subir el PDF a S3 (solo PDF, máx. 100 MB, 5 min) | hecho (lógica y handler, probado en local) |
+| `extract_chunk` | Extrae texto por páginas y trocea en chunks; el handler lee el PDF de S3 y deja los chunks en S3 | hecho (lógica y handler, probado en local) |
 | `embed_label` | Embeddings y etiquetado de `añoInicio` / `añoFin` | hecho (años y ubicación de cada chunk; probado con la API real y el Oxford Handbook) |
 | `write_mongo` | Valida el contrato y hace upsert en `book_chunks` (dry-run por defecto, `--target dev\|prod`) | hecho (chunks y hitos; probado contra `china_documents_dev`, nunca contra producción) |
 | `extract_hitos` | Hitos (es/en/zh) con lugar, año y coordenadas; cada uno con la cita que lo respalda | hecho (local, probado con el Oxford Handbook; se escribe con `write_mongo --kind hitos`) |

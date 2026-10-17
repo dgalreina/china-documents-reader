@@ -101,8 +101,22 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   Prueba (Oxford Handbook, PDF 376-395, Zhou Occidental): 3 hitos fiables de 38 chunks; dev tiene 3. Rendimiento bajo a proposito.
 - `write_mongo --kind hitos` guarda solo lo nuevo (ver Ideas -> dedupe). Probado en dev con dry-run: 2 duplicados descartados
   (0.87 y 0.94) y 1 nuevo; con `--replace-source`, reproceso sin marcar nada como duplicado de si mismo. 90 tests.
-- Pendiente, en este orden: `presign` → infra CDK →
-  UI de subida/hitos → agente `ask` → CI/CD. Ver `README.md` y `backend/README.md`.
+- `presign` y el `handler` de `extract_chunk` hechos y probados en local (sin AWS): `extract_chunk` lee el PDF de S3 y deja los
+  chunks en `jobs/<jobId>/chunks.json`, devolviendo solo la referencia (149 bytes; con el Oxford completo, 825 pags -> 2171 chunks,
+  13 s, 2.3 MB: Step Functions solo admite 256 KB entre pasos, por eso se pasan referencias y no datos). `presign` firma un POST a S3
+  (solo PDF, max 100 MB, 5 min) con `uploads/<jobId>/<nombre-seguro>.pdf`. `shared/storage.py`: `S3Storage` en AWS, `LocalStorage` en
+  pruebas. 152 tests.
+- **AWS (preparado, nada desplegado):** cuenta con plan GRATUITO (6 meses o hasta gastar los creditos; luego pasar a plan de pago o la
+  cuenta se cierra), presupuesto de 10 USD con alerta, region `eu-west-1`, usuario IAM `cdk-deployer`, CLI v2 y CDK instalados,
+  sesion con `aws login` (credenciales temporales de hasta 12 h; si caducan, repetir `aws login`; boto3 local necesita `botocore[crt]`).
+  **NO habilitar IAM Identity Center / AWS Organizations: convierte la cuenta en pago por uso y los creditos caducan al instante.**
+  **NO aceptar el MCP de AWS que ofrece `aws login`** sin decidirlo (da a un agente acceso a la cuenta con AdministratorAccess).
+- Pendiente, en este orden: diseno de la infra CDK (esperar OK del usuario) → UI de subida/hitos → agente `ask` → CI/CD.
+  Ver `README.md` y `backend/README.md`.
+  Decisiones abiertas de la infra: trocear libros grandes con un Map de Step Functions (embed_label y extract_hitos tardan minutos y
+  una Lambda dura max. 15), leer los chunks de S3 en tandas (hoy `embed_label/handler.py` recibe los chunks en el evento: hay que
+  cambiarlo), secretos (OpenAI, Mongo) en SSM/Secrets Manager, acceso de Lambda a Atlas (sin VPC la IP cambia: allowlist 0.0.0.0/0 con
+  credenciales fuertes), y **proteger el endpoint de subida**: publico, cada PDF dispara llamadas de pago a OpenAI.
 
 ## Personajes (diseño acordado con el usuario; en curso)
 
