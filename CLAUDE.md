@@ -106,6 +106,11 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   13 s, 2.3 MB: Step Functions solo admite 256 KB entre pasos, por eso se pasan referencias y no datos). `presign` firma un POST a S3
   (solo PDF, max 100 MB, 5 min) con `uploads/<jobId>/<nombre-seguro>.pdf`. `shared/storage.py`: `S3Storage` en AWS, `LocalStorage` en
   pruebas. 152 tests.
+- **Contador de coste** (`shared/usage.py`): `make_client()` devuelve un `TrackedClient` que cuenta tokens y coste estimado; cada CLI
+  imprime su resumen y la extrapolacion al libro entero. Precios en `PRICES` (mayo 2026, de comparadores de terceros, NO de openai.com:
+  verificar) y sobrescribibles con `OPENAI_PRICES`. Medido con el Oxford (pags. 376-395): embed_label ≈ $0.055 y 0.7 min por 20 pags
+  (→ ≈ $2.3 y ≈ 28 min para las 825 pags); extract_hitos ≈ $2.84 y ≈ 19 min por cada 1000 chunks etiquetados (→ ≈ $4-5 para ~1500).
+  Libro completo ≈ $6-8 de OpenAI y ≈ 1 h en serie (+ pequenas llamadas del juez en write_mongo). Una sola muestra de 20 pags: orientativo.
 - **AWS (preparado, nada desplegado):** cuenta con plan GRATUITO (6 meses o hasta gastar los creditos; luego pasar a plan de pago o la
   cuenta se cierra), presupuesto de 10 USD con alerta, region `eu-west-1`, usuario IAM `cdk-deployer`, CLI v2 y CDK instalados,
   sesion con `aws login` (credenciales temporales de hasta 12 h; si caducan, repetir `aws login`; boto3 local necesita `botocore[crt]`).

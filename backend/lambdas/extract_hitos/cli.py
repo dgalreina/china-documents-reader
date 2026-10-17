@@ -6,9 +6,12 @@ Usa la API de OpenAI (céntimos) y Wikidata/Mapbox. No escribe en ninguna base d
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
+
+from shared.usage import TRACKER
 
 from .pipeline import extract_hitos
 
@@ -27,7 +30,9 @@ def main() -> None:
         chunks = chunks[: args.limit]
     print(f"Chunks de entrada: {len(chunks)}")
 
+    started = time.perf_counter()
     result = extract_hitos(chunks, args.source)
+    elapsed = time.perf_counter() - started
 
     print(f"\nEstadísticas: {dict(result.stats)}")
     print(f"\nHitos guardables: {len(result.hitos)}")
@@ -42,6 +47,13 @@ def main() -> None:
         print(f"\nDescartados: {len(result.discarded)}")
         for d in result.discarded:
             print(f"  {d['reason']:<30} {d['año']:>6} | {d['sitio']} / hoy: {d['sitio_moderno']} ({d['provincia']}) | {d['titulo']}")
+
+    print()
+    print(TRACKER.report())
+    cost, _ = TRACKER.cost()
+    if chunks and cost:
+        print(f"Esta ejecución: {len(chunks)} chunks, {elapsed / 60:.1f} min, ≈ ${cost:.3f}  ->  "
+              f"≈ ${cost / len(chunks) * 1000:.2f} y ≈ {elapsed / len(chunks) * 1000 / 60:.0f} min por cada 1000 chunks etiquetados (en serie).")
 
     if args.out:
         args.out.write_text(

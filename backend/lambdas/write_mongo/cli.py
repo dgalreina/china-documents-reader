@@ -13,6 +13,8 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
+from shared.usage import TRACKER
+
 from .store import ContractError, resolve_target, write_chunks, write_hitos
 
 
@@ -45,6 +47,8 @@ def main() -> None:
         print(f"ERROR de contrato, no se ha escrito nada: {err}")
         raise SystemExit(1)
 
+    if TRACKER.by_model:
+        print(TRACKER.report())
     modo = "DRY-RUN (no se ha escrito nada)" if report.dry_run else "ESCRITO"
     print(f"{modo} -> {report.target} / base '{report.db_name}' / source '{report.source}'")
     print(f"{'Hitos' if args.kind == 'hitos' else 'Chunks'}: {report.total} | ya existían (se reemplazarían): {report.existing} | nuevos: {report.total - report.existing}")

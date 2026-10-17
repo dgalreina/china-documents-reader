@@ -7,12 +7,15 @@ empieza con --limit pequeño. No imprime nunca los vectores ni la clave.
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
 from ..extract_chunk.chunker import chunk_pages
 from ..extract_chunk.pdf_reader import extract_pages
+from shared.usage import TRACKER
+
 from .pipeline import embed_and_label
 
 
@@ -29,6 +32,7 @@ def main() -> None:
     load_dotenv(find_dotenv(usecwd=True))
 
     pages = extract_pages(args.pdf)
+    total_pages = len(pages)
     if args.pages:
         first, _, last = args.pages.partition("-")
         pages = [p for p in pages if int(first) <= p.number <= int(last or first)]
@@ -37,7 +41,9 @@ def main() -> None:
         chunks = chunks[: args.limit]
     print(f"Chunks a procesar: {len(chunks)}")
 
+    started = time.perf_counter()
     result = embed_and_label(chunks)
+    elapsed = time.perf_counter() - started
 
     if result.document_period:
         p = result.document_period
@@ -55,6 +61,17 @@ def main() -> None:
         print(f"  chunk {doc['chunkIndex']} (pág. {doc['pageStart']}): {doc['añoInicio']} a {doc['añoFin']} | {doc['text'][:70]!r}")
     for doc in result.pending[:5]:
         print(f"  PENDIENTE chunk {doc['chunkIndex']} (pág. {doc['pageStart']}): {doc['text'][:70]!r}")
+
+    print()
+    print(TRACKER.report())
+    covered = {page for c in chunks for page in range(c.page_start, c.page_end + 1)}
+    cost, _ = TRACKER.cost()
+    if covered and cost:
+        factor = total_pages / len(covered)
+        print(f"Esta ejecución: {len(covered)} páginas, {elapsed / 60:.1f} min, ≈ ${cost:.3f}  ->  "
+              f"≈ ${cost / len(covered):.4f} y {elapsed / len(covered):.1f} s por página.")
+        print(f"Extrapolado a las {total_pages} páginas del PDF: ≈ ${cost * factor:.2f} y ≈ {elapsed * factor / 60:.0f} min "
+              "(en serie; orientativo: depende de cuánto se parezca el resto del libro a estas páginas).")
 
     if args.out:
         slim = result.ready if args.with_vectors else [{k: v for k, v in d.items() if k != "embedding"} for d in result.ready]

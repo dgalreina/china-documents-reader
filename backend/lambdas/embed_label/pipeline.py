@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from openai import OpenAI
 
 from shared.geocoder import Geocoder
+from shared.usage import TRACKER, TrackedClient
 
 from ..extract_chunk.chunker import Chunk
 from .embedder import EMBEDDING_MODEL, embed_texts
@@ -39,7 +40,8 @@ class EmbedLabelResult:
 def make_client() -> OpenAI:
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("Falta OPENAI_API_KEY (ponla en el .env)")
-    return OpenAI(max_retries=5)
+    # Envuelto para contar los tokens de cada llamada (shared/usage.py); se usa igual que el cliente normal.
+    return TrackedClient(OpenAI(max_retries=5), TRACKER)
 
 
 def embed_and_label(
