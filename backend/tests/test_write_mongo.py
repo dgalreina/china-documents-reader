@@ -137,7 +137,7 @@ def test_hito_valido_genera_reemplazo_por_id_y_origen():
     from lambdas.write_mongo.store import build_hito_operations
 
     (op,) = build_hito_operations("mi-libro", [hito_doc()])
-    assert op._filter == {"id": "6e9d225ce7", "origen": "china-documents-reader"} and op._upsert is True
+    assert op._filter == {"id": "6e9d225ce7", "origen": "china-documents-reader", "fuente": "mi-libro"} and op._upsert is True
 
 
 @pytest.mark.parametrize(

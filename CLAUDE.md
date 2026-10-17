@@ -111,6 +111,19 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   verificar) y sobrescribibles con `OPENAI_PRICES`. Medido con el Oxford (pags. 376-395): embed_label ≈ $0.055 y 0.7 min por 20 pags
   (→ ≈ $2.3 y ≈ 28 min para las 825 pags); extract_hitos ≈ $2.84 y ≈ 19 min por cada 1000 chunks etiquetados (→ ≈ $4-5 para ~1500).
   Libro completo ≈ $6-8 de OpenAI y ≈ 1 h en serie (+ pequenas llamadas del juez en write_mongo). Una sola muestra de 20 pags: orientativo.
+- **Handlers por tandas (listos para Step Functions, probados en local con servicios reales):** `embed_label.period_handler` (periodo del
+  libro, una vez) y `embed_label.handler` (tanda de N chunks -> `jobs/<id>/labeled/<inicio>.json`), `extract_hitos.handler` (tanda ->
+  `jobs/<id>/hitos/<inicio>.json`), `write_mongo.chunks_handler` / `hitos_handler` / `cleanup_handler`. Todo pasa por S3 y cada paso
+  devuelve un resumen pequeno con su `usage` para sumar el coste. `hitos_handler` debe ir DE UNA EN UNA y en orden (resolucion de
+  personajes y 'solo lo nuevo'); chunks y embed_label pueden ir en paralelo. Simulado el flujo entero con S3 local + OpenAI real + Mongo
+  dev: 20 pags ≈ $0.16 y 75 s. `shared/secrets.py` (env/.env en local, SSM `SSM_PREFIX/<NOMBRE>` en AWS) y `shared/geodata.py`
+  (`GEODATA_BUCKET` -> /tmp en AWS) ya estan conectados. Destino de escritura en AWS: SOLO la variable `MONGO_TARGET` (por defecto dev).
+- **jobId, marca de origen y limpieza:** cada chunk/hito escrito por AWS lleva `jobId`; los chunks llevan `origen` (antes no); al final
+  `cleanup_old_runs` borra lo de ejecuciones ANTERIORES del mismo libro (solo con marca de esta app). Una tanda nunca borra huerfanos
+  (borraria lo de la tanda anterior). `write_chunks` se niega si el `source` ya tiene chunks sin nuestra marca (p. ej. un libro de
+  china-history con el mismo slug). **Fallo corregido:** un hito con el mismo `id` de OTRO libro (mismo titulo/lugar/anio) se sobrescribia
+  y luego la limpieza lo borraba; ahora el mismo id solo cuenta como 'el mismo hito' si es del mismo libro y la escritura reemplaza por
+  (id, origen, fuente). Revisar siempre a mano el estado de dev tras una simulacion: asi se vio.
 - **AWS (preparado, nada desplegado):** cuenta con plan GRATUITO (6 meses o hasta gastar los creditos; luego pasar a plan de pago o la
   cuenta se cierra), presupuesto de 10 USD con alerta, region `eu-west-1`, usuario IAM `cdk-deployer`, CLI v2 y CDK instalados,
   sesion con `aws login` (credenciales temporales de hasta 12 h; si caducan, repetir `aws login`; boto3 local necesita `botocore[crt]`).
@@ -118,16 +131,11 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   **NO aceptar el MCP de AWS que ofrece `aws login`** sin decidirlo (da a un agente acceso a la cuenta con AdministratorAccess).
 - Pendiente, en este orden: diseno de la infra CDK (esperar OK del usuario) → UI de subida/hitos → agente `ask` → CI/CD.
   Ver `README.md` y `backend/README.md`.
-  Decisiones abiertas de la infra: trocear libros grandes con un Map de Step Functions (embed_label y extract_hitos tardan minutos y
-  una Lambda dura max. 15), leer los chunks de S3 en tandas (hoy `embed_label/handler.py` recibe los chunks en el evento: hay que
-  cambiarlo), secretos (OpenAI, Mongo) en SSM/Secrets Manager, acceso de Lambda a Atlas (sin VPC la IP cambia: allowlist 0.0.0.0/0 con
-  credenciales fuertes), y **proteger el endpoint de subida**: publico, cada PDF dispara llamadas de pago a OpenAI.
-
-## Personajes (diseño acordado con el usuario; en curso)
-
-Objetivo: una lista de personajes enlazada con los hitos. Pinchar un nombre en un texto abre su ficha; dado un personaje, salen todos
-sus hitos. **Cambia el contrato con china-history** (hasta ahora solo `book_chunks` y `hitos_conocidos`): china-history no tiene el
-concepto y su agente debe construir el lado lectura (schema, endpoints, enlaces en la UI). Propuesta que se le pasó:
+  Decisiones tomadas para la infra: Standard Workflow con Map (max. 5 en paralelo) y 'redrive' para reanudar; secretos en SSM Parameter
+  Store; Atlas con allowlist 0.0.0.0/0 (M0 no tiene conexion privada) y credenciales fuertes; destino dev por defecto (`MONGO_TARGET`);
+  proteger la API con **login en el front (Cognito, un solo usuario, sin registro abierto) y autorizador JWT en API Gateway**, mas
+  limite de peticiones; el login solo en el front NO protege la API (se puede llamar directamente). Pendiente: escribir el CDK y
+  validarlo con `cdk synth` (sin desplegar), luego un primer despliegue pequeno con un PDF de 20 paginas.
 - Colección `personajes`: `id` (estable, se asigna al crear y no se recalcula), `nombre`/`nombre_en`/`nombre_zh`, `aliases` {es,en,zh},
   `nacimiento?`/`muerte?`, `rol`, `estado` (dinastía/estado), `descripcion` (+`_en`/`_zh`), `fuente`, `origen`.
 - `hitos_conocidos.personajes`: array opcional `[{ id, rol, menciones: {es, en, zh} }]`, con índice en `personajes.id`. `menciones` es el

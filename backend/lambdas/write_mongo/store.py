@@ -15,6 +15,7 @@ from pymongo import GEOSPHERE, MongoClient, ReplaceOne
 from pymongo.errors import BulkWriteError, OperationFailure
 
 from shared.geocoder import LAT_RANGE, LNG_RANGE
+from shared.secrets import get_secret
 
 from ..embed_label.embedder import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from ..embed_label.labeler import MAX_YEAR, MIN_YEAR
@@ -44,7 +45,7 @@ def resolve_target(name: str) -> Target:
     if name not in DEFAULT_DB:
         raise ContractError(f"Destino desconocido {name!r}: usa 'dev' o 'prod'")
     upper = name.upper()
-    uri = os.environ.get(f"MONGODB_URI_{upper}")
+    uri = get_secret(f"MONGODB_URI_{upper}")
     if not uri:
         raise ContractError(f"Falta MONGODB_URI_{upper} en el .env")
     db_name = os.environ.get(f"MONGODB_DB_{upper}", DEFAULT_DB[name])
@@ -97,8 +98,12 @@ def validate_location(doc: dict, where: str) -> None:
         raise ContractError(f"{where}: ubicacion no coincide con lat/lng (GeoJSON es [lng, lat])")
 
 
-def build_operations(source: str, docs: list[dict]) -> list[ReplaceOne]:
-    """Valida todo y devuelve los reemplazos (upsert) por (source, chunkIndex). Todo o nada."""
+def build_operations(source: str, docs: list[dict], job_id: str | None = None) -> list[ReplaceOne]:
+    """Valida todo y devuelve los reemplazos (upsert) por (source, chunkIndex). Todo o nada.
+
+    Cada chunk que escribe esta app lleva `origen` (para no confundirlo nunca con los de china-history) y, en AWS, `jobId`
+    (para saber qué ejecución lo escribió y poder borrar al final los de ejecuciones anteriores).
+    """
     if not source or not source.strip():
         raise ContractError("source (slug del documento) vacío")
     seen: set[int] = set()
@@ -111,7 +116,7 @@ def build_operations(source: str, docs: list[dict]) -> list[ReplaceOne]:
         # Reemplaza el documento ENTERO (no $set): si al reprocesar ya no hay ubicación, no debe quedar la antigua.
         ReplaceOne(
             {"source": source, "chunkIndex": doc["chunkIndex"]},
-            {**doc, "source": source},
+            {**doc, "source": source, "origen": ORIGIN, **({"jobId": job_id} if job_id else {})},
             upsert=True,
         )
         for doc in docs
@@ -140,11 +145,18 @@ def write_chunks(
     write: bool = False,
     ensure_index: bool = False,
     replace_source: bool = False,
+    job_id: str | None = None,
 ) -> WriteReport:
-    operations = build_operations(source, docs)  # valida antes de abrir ninguna conexión
+    operations = build_operations(source, docs, job_id)  # valida antes de abrir ninguna conexión
     client = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
     try:
         collection = client[target.db_name][COLLECTION]
+        # Protección: si ya hay chunks de ese `source` que NO son de esta app (p. ej. un libro de china-history con el mismo
+        # slug), reemplazar por (source, chunkIndex) los pisaría. Se rechaza antes de escribir nada.
+        if collection.count_documents({"source": source, "origen": {"$ne": ORIGIN}}, limit=1):
+            raise ContractError(
+                f"el source {source!r} ya tiene chunks que no son de esta app (sin marca de origen): usa otro slug"
+            )
         indexes = [d["chunkIndex"] for d in docs]
         existing = collection.count_documents({"source": source, "chunkIndex": {"$in": indexes}})
         report = WriteReport(target.name, target.db_name, source, not write, len(docs), existing)
@@ -237,7 +249,7 @@ def validate_hito(hito: dict) -> None:
             raise ContractError(f"{where}: enlace a personaje inválido {link!r}")
 
 
-def build_hito_operations(source: str, hitos: list[dict]) -> list[ReplaceOne]:
+def build_hito_operations(source: str, hitos: list[dict], job_id: str | None = None) -> list[ReplaceOne]:
     """Valida todo y devuelve los reemplazos por id. Todo o nada."""
     if not source or not source.strip():
         raise ContractError("source (slug del libro) vacío")
@@ -249,10 +261,13 @@ def build_hito_operations(source: str, hitos: list[dict]) -> list[ReplaceOne]:
         if hito["id"] in seen:
             raise ContractError(f"id {hito['id']} repetido")
         seen.add(hito["id"])
-    # El filtro incluye `origen`: si el id ya existe pero es de otro origen (un hito de china-history), el upsert
-    # intentaría insertar un duplicado y el índice único lo rechaza. Nunca se pisa un hito ajeno.
-    clean = [{k: v for k, v in hito.items() if not k.startswith("_")} for hito in hitos]  # _evidencia es solo de revisión
-    return [ReplaceOne({"id": hito["id"], "origen": ORIGIN}, hito, upsert=True) for hito in clean]
+    # El filtro incluye `origen` Y `fuente`: si el id ya existe pero es de otro origen (un hito de china-history) o de OTRO LIBRO
+    # (el mismo hecho con el mismo título sale con el mismo id), el upsert intentaría insertar un duplicado y el índice único
+    # lo rechaza. Nunca se pisa un hito ajeno.
+    clean = [  # _evidencia es solo de revisión; jobId marca qué ejecución lo escribió
+        {**{k: v for k, v in hito.items() if not k.startswith("_")}, **({"jobId": job_id} if job_id else {})} for hito in hitos
+    ]
+    return [ReplaceOne({"id": hito["id"], "origen": ORIGIN, "fuente": source}, hito, upsert=True) for hito in clean]
 
 
 PERSONAJES_COLLECTION = "personajes"
@@ -294,16 +309,22 @@ def build_personaje_operations(docs: list[dict]) -> list[ReplaceOne]:
 HITO_NEIGHBOR_FIELDS = {"_id": 0, "id": 1, "titulo": 1, "titulo_en": 1, "descripcion": 1, "descripcion_en": 1, "año": 1, "fuente": 1, "location": 1}
 
 
-def mongo_neighbors(collection, source: str, replace_source: bool):
+def mongo_neighbors(collection, source: str, replace_source: bool, job_id: str | None = None):
     """Función que devuelve los hitos ya guardados cerca (en año y lugar) de uno dado. Solo lectura."""
     from .dedupe import RADIUS_KM, YEAR_WINDOW, is_close
 
     def neighbors(hito: dict) -> list[dict]:
         lng, lat = hito["location"]["coordinates"]
-        query = {"año": {"$gte": hito["año"] - YEAR_WINDOW, "$lte": hito["año"] + YEAR_WINDOW}, "id": {"$ne": hito["id"]}}
+        query = {"año": {"$gte": hito["año"] - YEAR_WINDOW, "$lte": hito["año"] + YEAR_WINDOW}}
+        # Se excluye el MISMO hito de ESTE libro (se va a reemplazar: no es un vecino). Un hito con el mismo id pero de otro libro
+        # SÍ es vecino: es el mismo hecho que ya está guardado y debe salir como duplicado, no sobrescribirse.
+        excluded = [{"id": hito["id"], "origen": ORIGIN, "fuente": source}]
         if replace_source:
-            # Los de este mismo libro se van a reemplazar: compararse con ellos marcaría todo como duplicado.
-            query["$nor"] = [{"origen": ORIGIN, "fuente": source}]
+            # Los de este mismo libro se van a reemplazar: compararse con ellos marcaría todo como duplicado. Con jobId (AWS,
+            # por tandas) solo se excluyen los de EJECUCIONES ANTERIORES: los que escribieron tandas previas de esta sí cuentan.
+            old = {"origen": ORIGIN, "fuente": source}
+            excluded.append({**old, "jobId": {"$ne": job_id}} if job_id else old)
+        query["$nor"] = excluded
         try:
             near = {"location": {"$near": {"$geometry": {"type": "Point", "coordinates": [lng, lat]}, "$maxDistance": RADIUS_KM * 1000}}}
             return list(collection.find({**query, **near}, HITO_NEIGHBOR_FIELDS).limit(10))
@@ -324,8 +345,9 @@ def write_hitos(
     dedupe: bool = True,
     client=None,
     personajes: bool = True,
+    job_id: str | None = None,
 ) -> WriteReport:
-    build_hito_operations(source, hitos)  # valida TODO antes de abrir ninguna conexión
+    build_hito_operations(source, hitos, job_id)  # valida TODO antes de abrir ninguna conexión
     mongo = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
     try:
         collection = mongo[target.db_name][HITOS_COLLECTION]
@@ -335,7 +357,7 @@ def write_hitos(
             from ..embed_label.pipeline import make_client
             from .dedupe import filter_new
 
-            hitos, duplicates = filter_new(hitos, mongo_neighbors(collection, source, replace_source), client or make_client())
+            hitos, duplicates = filter_new(hitos, mongo_neighbors(collection, source, replace_source, job_id), client or make_client())
         personaje_docs: list[dict] = []
         personajes_stats: dict = {}
         personajes_log: list = []
@@ -353,7 +375,7 @@ def write_hitos(
         elif not personajes:
             hitos = [{k: v for k, v in h.items() if k != "_personajes"} for h in hitos]
         personaje_operations = build_personaje_operations(personaje_docs)
-        operations = build_hito_operations(source, hitos) if hitos else []
+        operations = build_hito_operations(source, hitos, job_id) if hitos else []
         ids = [h["id"] for h in hitos]
         existing = collection.count_documents({"id": {"$in": ids}, "origen": ORIGIN})
         report = WriteReport(
@@ -361,7 +383,10 @@ def write_hitos(
             personajes_stats=personajes_stats, personajes_log=personajes_log,
         )
         orphan_filter = {"origen": ORIGIN, "fuente": source, "id": {"$nin": ids}}
-        if replace_source:
+        # Con job_id (AWS, por tandas) el borrado lo hace cleanup_old_runs al final, no cada tanda: si no, cada una
+        # borraría lo que escribió la anterior.
+        batch_replace = replace_source and job_id is None
+        if batch_replace:
             report.orphans = collection.count_documents(orphan_filter)
         if ensure_index:
             if target.name != "dev":
@@ -381,8 +406,26 @@ def write_hitos(
             except BulkWriteError as err:
                 raise ContractError(f"colisión de id con un hito que no es de esta app (no se pisa): {err.details['writeErrors'][:1]}")
             report.written = result.upserted_count + result.matched_count
-            if replace_source:
+            if batch_replace:
                 collection.delete_many(orphan_filter)
         return report
     finally:
         mongo.close()
+
+
+def cleanup_old_runs(target: Target, source: str, job_id: str) -> dict:
+    """Al terminar un trabajo con reemplazo: borra los chunks y hitos de EJECUCIONES ANTERIORES de ese libro.
+
+    Solo toca documentos con la marca de esta app (`origen`) y de otro `jobId`: nunca los de china-history, aunque coincida el
+    nombre del libro. Los de esta ejecución (los acaban de escribir las tandas) se conservan.
+    """
+    if not job_id:
+        raise ContractError("cleanup_old_runs necesita el jobId de la ejecución actual")
+    client = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
+    try:
+        db = client[target.db_name]
+        chunks = db[COLLECTION].delete_many({"source": source, "origen": ORIGIN, "jobId": {"$ne": job_id}}).deleted_count
+        hitos = db[HITOS_COLLECTION].delete_many({"origen": ORIGIN, "fuente": source, "jobId": {"$ne": job_id}}).deleted_count
+        return {"chunksBorrados": chunks, "hitosBorrados": hitos}
+    finally:
+        client.close()

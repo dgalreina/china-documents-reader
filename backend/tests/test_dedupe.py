@@ -96,8 +96,27 @@ def test_al_reemplazar_el_libro_sus_hitos_viejos_no_cuentan_como_existentes():
     # Si no, reprocesar un libro marcaría todo como duplicado de la tanda anterior y luego se borraría la anterior.
     col = FakeCollection()
     mongo_neighbors(col, "mi-libro", replace_source=True)(h("x"))
-    assert col.query["$nor"] == [{"origen": ORIGIN, "fuente": "mi-libro"}]
+    same = {"id": "x", "origen": ORIGIN, "fuente": "mi-libro"}
+    assert col.query["$nor"] == [same, {"origen": ORIGIN, "fuente": "mi-libro"}]
     col2 = FakeCollection()
     mongo_neighbors(col2, "mi-libro", replace_source=False)(h("x"))
-    assert "$nor" not in col2.query  # sin reemplazar, sí se compara con la tanda anterior
-    assert col2.query["id"] == {"$ne": "x"}
+    assert col2.query["$nor"] == [same]  # sin reemplazar, sí se compara con la tanda anterior; solo se excluye el mismo hito de este libro
+
+
+def test_un_hito_con_el_mismo_id_de_otro_libro_cuenta_como_vecino_y_no_se_sobrescribe():
+    # Fallo real: la extracción de un libro de prueba generó el mismo hecho con el mismo título (= mismo id) que un hito de otro
+    # libro; se excluía como "el mismo hito", se reemplazaba y luego la limpieza lo borraba.
+    col = FakeCollection()
+    mongo_neighbors(col, "libro-b", replace_source=False)(h("x"))
+    (excluded,) = col.query["$nor"]
+    assert excluded["fuente"] == "libro-b"  # solo se excluye el mismo hito de ESTE libro: uno de "libro-a" con el mismo id se compara
+    other_book_doc = {"id": "x", "origen": ORIGIN, "fuente": "libro-a"}
+    assert any(other_book_doc.get(k) != v for k, v in excluded.items())  # no coincide con la exclusión -> sí es vecino
+
+
+def test_la_escritura_no_reemplaza_un_hito_de_otro_libro_con_el_mismo_id():
+    from lambdas.write_mongo.store import build_hito_operations
+    from tests.test_write_mongo import hito_doc
+
+    (op,) = build_hito_operations("libro-b", [hito_doc(fuente="libro-b")])
+    assert op._filter["fuente"] == "libro-b"  # si el id existe en libro-a, el upsert no casa e intenta insertar: el índice único lo rechaza

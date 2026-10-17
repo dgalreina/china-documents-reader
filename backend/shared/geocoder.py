@@ -178,10 +178,14 @@ class Geocoder:
     @classmethod
     def from_env(cls) -> "Geocoder":
         """Usa lo que haya configurado en el entorno; las fuentes sin configurar se saltan."""
+        from .geodata import ensure_geodata  # en AWS descarga los datos de S3 a /tmp y apunta las variables; en local no hace nada
+        from .secrets import get_secret
+
+        ensure_geodata()
         return cls(
             curated_dir=os.environ.get("CHINA_HISTORY_DATA_DIR"),
             chgis_dir=os.environ.get("CHGIS_DIR"),
-            mapbox_token=os.environ.get("MAPBOX_TOKEN"),
+            mapbox_token=get_secret("MAPBOX_TOKEN"),
         )
 
     # ---- carga de datos -------------------------------------------------

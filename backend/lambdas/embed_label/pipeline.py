@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from openai import OpenAI
 
 from shared.geocoder import Geocoder
+from shared.secrets import get_secret
 from shared.usage import TRACKER, TrackedClient
 
 from ..extract_chunk.chunker import Chunk
@@ -38,10 +39,20 @@ class EmbedLabelResult:
 
 
 def make_client() -> OpenAI:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("Falta OPENAI_API_KEY (ponla en el .env)")
+    api_key = get_secret("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Falta OPENAI_API_KEY (ponla en el .env o en SSM)")
     # Envuelto para contar los tokens de cada llamada (shared/usage.py); se usa igual que el cliente normal.
-    return TrackedClient(OpenAI(max_retries=5), TRACKER)
+    return TrackedClient(OpenAI(api_key=api_key, max_retries=5), TRACKER)
+
+
+def infer_period_from_chunks(chunks: list[Chunk], client: OpenAI, label_model: str) -> DocumentPeriod | None:
+    """Periodo general del libro a partir de su arranque (los 4 primeros chunks). None si falla: se etiqueta igual, solo peor."""
+    head = "\n\n".join(c.text for c in chunks[:4])
+    try:
+        return infer_document_period(client, label_model, head)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def embed_and_label(
@@ -49,7 +60,11 @@ def embed_and_label(
     client: OpenAI | None = None,
     label_model: str | None = None,
     geocoder: Geocoder | None = None,
+    document_period: DocumentPeriod | None = None,
+    infer_period: bool = True,
 ) -> EmbedLabelResult:
+    """`infer_period=False` usa `document_period` tal cual (aunque sea None): así una tanda de un libro grande no lo recalcula
+    con sus propios chunks, que no son el arranque del libro."""
     client = client or make_client()
     label_model = label_model or os.environ.get("LABEL_MODEL", DEFAULT_LABEL_MODEL)
     geocoder = geocoder or Geocoder.from_env()
@@ -57,14 +72,11 @@ def embed_and_label(
     if not chunks:
         return result
 
-    # Contexto del documento: el arranque del libro (primeros chunks).
-    head = "\n\n".join(c.text for c in chunks[:4])
-
     #Parte1: El labeler:
-    try:
-        result.document_period = infer_document_period(client, label_model, head)
-    except Exception:  # noqa: BLE001 — sin contexto se etiqueta igual, solo peor
-        result.document_period = None
+    if infer_period:
+        result.document_period = infer_period_from_chunks(chunks, client, label_model)
+    else:
+        result.document_period = document_period
 
     labels = label_chunks(client, label_model, result.document_period, [c.text for c in chunks])
     # Rangos válidos pero inútiles (≈ todo el libro) -> pendientes, con su motivo.
