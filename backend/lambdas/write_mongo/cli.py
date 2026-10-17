@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--write", action="store_true", help="escribe de verdad (sin esto es dry-run)")
     parser.add_argument("--replace-source", action="store_true", help="borra los chunks de ese source que ya no están en esta tanda (solo ese source)")
     parser.add_argument("--keep-duplicates", action="store_true", help="solo hitos: no descartar los que ya existen con otras palabras")
+    parser.add_argument("--no-personajes", action="store_true", help="solo hitos: no crear fichas ni enlazar personajes")
     parser.add_argument("--ensure-index", action="store_true", help="solo dev: crea los índices en la base de pruebas")
     args = parser.parse_args()
 
@@ -37,7 +38,7 @@ def main() -> None:
             if typed.strip() != target.db_name:
                 print("No coincide. Cancelado, no se ha escrito nada.")
                 return
-        extra = {"dedupe": not args.keep_duplicates} if args.kind == "hitos" else {}
+        extra = {"dedupe": not args.keep_duplicates, "personajes": not args.no_personajes} if args.kind == "hitos" else {}
         writer = write_hitos if args.kind == "hitos" else write_chunks
         report = writer(target, args.source, docs, write=args.write, ensure_index=args.ensure_index, replace_source=args.replace_source, **extra)
     except ContractError as err:
@@ -51,6 +52,10 @@ def main() -> None:
         print(f"Duplicados descartados (ya existían con otras palabras): {len(report.duplicates)}")
         for d in report.duplicates:
             print(f"  {d['año']:>6} {d['titulo'][:44]:44} = [{d['fuente_existente']}] {str(d['titulo_existente'])[:40]} (parecido {d['parecido']}, {d['via']})")
+    if report.personajes_stats:
+        print(f"Personajes: {report.personajes_stats}")
+        for line in report.personajes_log:
+            print(f"  {line}")
     if args.replace_source:
         accion = "borrados" if not report.dry_run else "se borrarían"
         print(f"Huérfanos del source '{report.source}' ({accion}): {report.orphans}")

@@ -128,6 +128,8 @@ class WriteReport:
     existing: int  # ya existían (se reemplazarían)
     written: int = 0
     orphans: int = 0  # chunkIndex de ese source que ya no existen y se borrarían/borraron (--replace-source)
+    personajes_stats: dict = field(default_factory=dict)  # nuevos / unidos / llamadas al juez
+    personajes_log: list = field(default_factory=list)  # qué se creó y qué se unió, para revisar
     duplicates: list = field(default_factory=list)  # hitos que ya existían (con otras palabras) y no se escriben
 
 
@@ -230,6 +232,9 @@ def validate_hito(hito: dict) -> None:
     for field_name in ("lugar_zh", "titulo_zh", "descripcion_zh"):
         if hito.get(field_name) and not CJK.search(hito[field_name]):
             raise ContractError(f"{where}: {field_name} no contiene caracteres chinos")
+    for link in hito.get("personajes", []):
+        if not isinstance(link, dict) or not PERSONAJE_ID.match(str(link.get("id", ""))) or not link.get("rol") or not link.get("menciones"):
+            raise ContractError(f"{where}: enlace a personaje inválido {link!r}")
 
 
 def build_hito_operations(source: str, hitos: list[dict]) -> list[ReplaceOne]:
@@ -248,6 +253,42 @@ def build_hito_operations(source: str, hitos: list[dict]) -> list[ReplaceOne]:
     # intentaría insertar un duplicado y el índice único lo rechaza. Nunca se pisa un hito ajeno.
     clean = [{k: v for k, v in hito.items() if not k.startswith("_")} for hito in hitos]  # _evidencia es solo de revisión
     return [ReplaceOne({"id": hito["id"], "origen": ORIGIN}, hito, upsert=True) for hito in clean]
+
+
+PERSONAJES_COLLECTION = "personajes"
+PERSONAJE_ID = re.compile(r"^[a-z0-9-]+-[0-9a-f]{6}$")
+
+
+def validate_personaje(doc: dict) -> None:
+    """Lanza ContractError si la ficha no se puede escribir en personajes."""
+    where = f"personaje {doc.get('id', '?')}"
+    for field_name in ("id", "nombre", "nombre_en", "rol", "rol_en", "descripcion", "descripcion_en", "fuente", "origen", "aliases", "aliasNorm"):
+        if doc.get(field_name) in (None, "", [], {}):
+            raise ContractError(f"{where}: falta {field_name}")
+    if not PERSONAJE_ID.match(doc["id"]):
+        raise ContractError(f"{where}: id con formato inválido")
+    if doc["origen"] != ORIGIN:
+        raise ContractError(f"{where}: origen debe ser {ORIGIN!r}")
+    if not all(isinstance(doc["aliases"].get(lang), list) for lang in ("es", "en", "zh")):
+        raise ContractError(f"{where}: aliases debe tener listas es, en y zh")
+    for field_name in ("nacimiento", "muerte", "actividadInicio", "actividadFin"):
+        value = doc.get(field_name)
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or not (MIN_YEAR <= value <= MAX_YEAR)):
+            raise ContractError(f"{where}: {field_name} fuera de {MIN_YEAR}..{MAX_YEAR}")
+    for field_name in ("nombre_zh", "rol_zh", "estado_zh", "descripcion_zh"):
+        if doc.get(field_name) and not CJK.search(doc[field_name]):
+            raise ContractError(f"{where}: {field_name} no contiene caracteres chinos")
+
+
+def build_personaje_operations(docs: list[dict]) -> list[ReplaceOne]:
+    """Reemplazo por (id, origen): nunca se pisa una ficha que no sea de esta app."""
+    seen: set[str] = set()
+    for doc in docs:
+        validate_personaje(doc)
+        if doc["id"] in seen:
+            raise ContractError(f"id de personaje {doc['id']} repetido")
+        seen.add(doc["id"])
+    return [ReplaceOne({"id": doc["id"], "origen": ORIGIN}, doc, upsert=True) for doc in docs]
 
 
 HITO_NEIGHBOR_FIELDS = {"_id": 0, "id": 1, "titulo": 1, "titulo_en": 1, "descripcion": 1, "descripcion_en": 1, "año": 1, "fuente": 1, "location": 1}
@@ -282,6 +323,7 @@ def write_hitos(
     replace_source: bool = False,
     dedupe: bool = True,
     client=None,
+    personajes: bool = True,
 ) -> WriteReport:
     build_hito_operations(source, hitos)  # valida TODO antes de abrir ninguna conexión
     mongo = MongoClient(target.uri, serverSelectionTimeoutMS=8000)
@@ -294,10 +336,30 @@ def write_hitos(
             from .dedupe import filter_new
 
             hitos, duplicates = filter_new(hitos, mongo_neighbors(collection, source, replace_source), client or make_client())
+        personaje_docs: list[dict] = []
+        personajes_stats: dict = {}
+        personajes_log: list = []
+        if personajes and hitos:
+            # Resolución de identidad contra las fichas de la base de destino; las fichas nuevas o ampliadas se escriben
+            # ANTES que los hitos, para que ningún enlace quede apuntando a una ficha que no existe.
+            from ..embed_label.pipeline import make_client
+            from .personajes import resolve_personajes
+
+            people = mongo[target.db_name][PERSONAJES_COLLECTION]
+            find = lambda forms: list(people.find({"aliasNorm": {"$in": sorted(forms)}}, {"_id": 0}))  # noqa: E731
+            resolution = resolve_personajes(hitos, source, find, client or make_client())
+            hitos, personaje_docs = resolution.hitos, resolution.docs
+            personajes_stats, personajes_log = dict(resolution.stats), resolution.log
+        elif not personajes:
+            hitos = [{k: v for k, v in h.items() if k != "_personajes"} for h in hitos]
+        personaje_operations = build_personaje_operations(personaje_docs)
         operations = build_hito_operations(source, hitos) if hitos else []
         ids = [h["id"] for h in hitos]
         existing = collection.count_documents({"id": {"$in": ids}, "origen": ORIGIN})
-        report = WriteReport(target.name, target.db_name, source, not write, len(hitos), existing, duplicates=duplicates)
+        report = WriteReport(
+            target.name, target.db_name, source, not write, len(hitos), existing, duplicates=duplicates,
+            personajes_stats=personajes_stats, personajes_log=personajes_log,
+        )
         orphan_filter = {"origen": ORIGIN, "fuente": source, "id": {"$nin": ids}}
         if replace_source:
             report.orphans = collection.count_documents(orphan_filter)
@@ -308,6 +370,11 @@ def write_hitos(
                 collection.create_index([("location", GEOSPHERE)])
                 collection.create_index("año")
                 collection.create_index("id", unique=True)
+                people_col = mongo[target.db_name][PERSONAJES_COLLECTION]
+                people_col.create_index("id", unique=True)
+                people_col.create_index("aliasNorm")
+        if write and personaje_operations:
+            mongo[target.db_name][PERSONAJES_COLLECTION].bulk_write(personaje_operations, ordered=False)
         if write and operations:
             try:
                 result = collection.bulk_write(operations, ordered=False)

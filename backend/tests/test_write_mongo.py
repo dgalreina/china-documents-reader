@@ -165,3 +165,52 @@ def test_hito_con_id_repetido_se_rechaza():
 
     with pytest.raises(ContractError):
         build_hito_operations("mi-libro", [hito_doc(), hito_doc()])
+
+
+# ---- personajes ---------------------------------------------------------------------------------------
+
+
+def ficha_doc(**over):
+    base = {
+        "id": "king-wu-of-zhou-4f2a1c", "nombre": "Rey Wu de Zhou", "nombre_en": "King Wu of Zhou", "nombre_zh": "周武王",
+        "aliases": {"es": ["Fa"], "en": ["Fa"], "zh": ["周武王"]}, "aliasNorm": ["kingwu", "周武王"],
+        "rol": "líder", "rol_en": "leader", "descripcion": "Fundador.", "descripcion_en": "Founder.",
+        "fuente": "mi-libro", "origen": "china-documents-reader", "actividadInicio": -1046, "actividadFin": -1043,
+    }
+    return {**base, **over}
+
+
+def test_ficha_valida_genera_reemplazo_por_id_y_origen():
+    from lambdas.write_mongo.store import build_personaje_operations
+
+    (op,) = build_personaje_operations([ficha_doc()])
+    assert op._filter == {"id": "king-wu-of-zhou-4f2a1c", "origen": "china-documents-reader"} and op._upsert is True
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"id": "sin-hash"},
+        {"origen": "china-history"},
+        {"aliases": {"es": [], "en": []}},  # falta zh
+        {"aliasNorm": []},
+        {"nombre_zh": "King Wu"},  # sin caracteres chinos
+        {"muerte": 9000},
+        {"descripcion": ""},
+    ],
+)
+def test_ficha_invalida_se_rechaza(over):
+    from lambdas.write_mongo.store import build_personaje_operations
+
+    with pytest.raises(ContractError):
+        build_personaje_operations([ficha_doc(**over)])
+
+
+def test_enlace_a_personaje_invalido_en_un_hito_se_rechaza():
+    from lambdas.write_mongo.store import build_hito_operations
+
+    bueno = {"id": "king-wu-of-zhou-4f2a1c", "rol": "líder", "menciones": {"en": "King Wu"}}
+    build_hito_operations("mi-libro", [hito_doc(personajes=[bueno])])  # no lanza
+    for malo in ({**bueno, "id": "mal"}, {**bueno, "menciones": {}}, {**bueno, "rol": ""}):
+        with pytest.raises(ContractError):
+            build_hito_operations("mi-libro", [hito_doc(personajes=[malo])])

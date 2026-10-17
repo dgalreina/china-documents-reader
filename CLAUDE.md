@@ -120,11 +120,16 @@ Decisiones: solo personajes que intervienen en algún hito (no cualquier persona
 chino fallan a veces); unir identidades de forma CONSERVADORA (alias en común + época compatible + juez; ante la duda, ficha separada,
 porque mezclar dos personas distintas es peor que partir una en dos).
 
-Estado: **paso 2 hecho** (la extracción de hitos devuelve `_personajes` validados por hito; los campos con `_` no se escriben en Mongo).
-Validación en código: el nombre debe estar en el texto original (anti-invención) y la mención se BUSCA en código (la forma más larga
-de nombre/alias que esté literal en el texto del hito en cada idioma, con límites de palabra; no se fía de la que da el modelo, que no
-solía coincidir). **Pendiente (paso 3, esperar OK):** resolución de identidad contra la colección `personajes` de la base de destino,
-escritura de fichas y de `personajes` en el hito, `write_mongo --kind personajes`, primero en dev.
+Estado: **pasos 2 y 3 hechos, probados en dev.** La extraccion de hitos devuelve `_personajes` validados (el nombre debe estar en el
+texto original; la mencion enlazable se BUSCA en codigo, la forma mas larga de nombre/alias que este literal en el texto del hito en cada
+idioma, con limites de palabra; no se fia de la que da el modelo). `write_mongo --kind hitos` (`--no-personajes` lo desactiva) resuelve la
+identidad contra la coleccion `personajes` de la base de destino (`lambdas/write_mongo/personajes.py`): candidatos por alias normalizado
+(`aliasNorm`, indexado) y epoca compatible (actividad +-60 anios); mismo nombre canonico y estado compatible -> se une; si no, un juez
+(cacheado) y ante la duda ficha separada. Las fichas de otro origen se enlazan pero no se modifican. Orden de escritura: fichas primero,
+luego hitos (ningun enlace colgando). Las fichas llevan `aliases {es,en,zh}`, `aliasNorm`, `actividadInicio/Fin`, `fuentes`, `origen`.
+El hito lleva `personajes: [{id, rol, rol_en, rol_zh?, menciones}]`. Probado: tres fichas (reyes Wu, Cheng, Ping), la segunda aparicion del
+rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida en enlace funcionan. Produccion intacta (sin coleccion
+`personajes`). 123 tests. **Pendiente en china-history (su agente):** schema, endpoints y enlaces en la UI.
 
 ## Ideas apuntadas (sin implementar)
 
