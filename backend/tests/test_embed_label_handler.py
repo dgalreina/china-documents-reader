@@ -51,7 +51,7 @@ def test_no_vuelve_a_inferir_el_periodo_con_su_trozo(storage):
     asked = []
     client = FakeClient({i: (1, 2) for i in range(25)})
     original = client._parse
-    client.chat.completions.parse = lambda model, messages, response_format: (asked.append(response_format.__name__), original(model, messages, response_format))[1]
+    client.chat.completions.parse = lambda model, messages, response_format, **kw: (asked.append(response_format.__name__), original(model, messages, response_format, **kw))[1]
     handler(event(), storage=storage, client=client, geocoder=Geocoder())
     assert "DocumentPeriod" not in asked
 

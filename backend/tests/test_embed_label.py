@@ -30,7 +30,7 @@ class FakeClient:
         data = [SimpleNamespace(index=i, embedding=[0.0] * EMBEDDING_DIMENSIONS) for i in range(len(input))]
         return SimpleNamespace(data=data)
 
-    def _parse(self, model, messages, response_format):
+    def _parse(self, model, messages, response_format, **kwargs):
         if response_format is DocumentPeriod:
             parsed = DocumentPeriod(resumen="China Tang", ano_inicio=618, ano_fin=907)
         else:

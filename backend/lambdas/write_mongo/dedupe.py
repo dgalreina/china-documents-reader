@@ -19,6 +19,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from shared.geocoder import _distance_km
+from shared.llm import chat_params
 
 YEAR_WINDOW = 15  # las fechas antiguas son discutidas (la conquista de Shang: -1050, -1046, -1045 según la fuente)
 RADIUS_KM = 25
@@ -72,6 +73,7 @@ def judge(client: OpenAI, model: str, new_text: str, existing_text: str) -> Same
             {"role": "user", "content": f"HITO NUEVO:\n{new_text}\n\nHITO YA EXISTENTE:\n{existing_text}"},
         ],
         response_format=SameEvent,
+        **chat_params(),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None:

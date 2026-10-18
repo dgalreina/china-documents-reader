@@ -5,6 +5,17 @@ return = {"jobId", "bucket", "chunksKey", "chunkCount", "pageCount", "emptyPages
 
 No devuelve los chunks: los deja en `jobs/<jobId>/chunks.json` y devuelve dónde están, porque Step Functions no admite
 más de 256 KB entre pasos (ver shared/storage.py). Los pasos siguientes leen ese fichero.
+
+
+Se lanza el handler con el event, storage.
+de event sacamos el job_id, bucket y key
+se crea archivo temporal tmp de la lambda, se crea la ruta de tmp, se descarga ahi lo que hay en s3, y se divide en paginas
+
+de las paginas saco los chunks
+creo la chunk key
+meto los chunks en storage
+
+devuelvo un resumen
 """
 
 import tempfile

@@ -247,3 +247,22 @@ def test_wikidata_ignora_alias_y_provincias():
 def test_wikidata_descarta_una_entidad_que_es_un_estado():
     http = wikidata_http([("Q1", "Zhongshan", "former country", 38.33, 114.29)])
     assert Geocoder(mapbox_token="x", http_get=http).geocode("Zhongshan", "Hebei") is None
+
+
+# ---- nombres cortos y ambiguos en Mapbox ("Feng" vs "Feng County") -----------------------------------------
+
+
+def test_mapbox_rechaza_un_condado_moderno_para_un_nombre_corto_ambiguo():
+    # Fallo real: "Feng" (la capital Zhou, cerca de Xi'an) se resolvía como "Feng County" (Baoji), a ~200 km.
+    geo = Geocoder(mapbox_token="x", http_get=lambda url: mapbox_response("Shaanxi", lat=33.91, lng=106.52, name="Feng County"))
+    assert geo.geocode("Feng", "Shaanxi") is None
+
+
+def test_mapbox_acepta_un_nombre_corto_si_el_resultado_se_llama_exactamente_igual():
+    geo = Geocoder(mapbox_token="x", http_get=lambda url: mapbox_response("Shaanxi", lat=34.2, lng=108.9, name="Feng"))
+    assert geo.geocode("Feng", "Shaanxi").source == "mapbox"
+
+
+def test_mapbox_sigue_aceptando_los_nombres_largos_con_un_sufijo():
+    geo = Geocoder(mapbox_token="x", http_get=lambda url: mapbox_response("Henan", lat=34.7, lng=113.6, name="Zhengzhou City"))
+    assert geo.geocode("Zhengzhou", "Henan").source == "mapbox"

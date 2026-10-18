@@ -48,6 +48,7 @@ NOT_A_SITE_DESCRIPTION = re.compile(
 # Tipos de resultado de Mapbox aceptables (un lugar concreto). Se excluyen "region" y "country".
 MAPBOX_PLACE_TYPES = {"place", "locality", "district", "neighborhood", "poi"}
 MAPBOX_MIN_RELEVANCE = 0.8
+MAPBOX_SHORT_NAME_CHARS = 5  # nombres de hasta 5 letras: coincidencia exacta
 
 HttpGet = Callable[[str], dict]
 
@@ -274,6 +275,11 @@ class Geocoder:
                 continue
             # El nombre devuelto debe parecerse al buscado: si no, es otro lugar de la misma provincia.
             if not _similar(site, feature.get("text", "")):
+                continue
+            # Un nombre corto ("Feng", "Bin") es ambiguo: "Feng County" (un condado moderno) no es la capital Feng de los Zhou, aunque el
+            # nombre se parezca y la provincia coincida. Con nombres cortos, solo se acepta un resultado que se llame EXACTAMENTE igual.
+            wanted = _site_key(site).replace(" ", "")
+            if len(wanted) <= MAPBOX_SHORT_NAME_CHARS and wanted != _site_key(feature.get("text", "")).replace(" ", ""):
                 continue
             lng, lat = feature["center"]
             return GeoResult(lat, lng, "mapbox", feature.get("place_name", site))

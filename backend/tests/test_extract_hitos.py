@@ -24,7 +24,7 @@ class FakeClient:
         self.calls = 0
         self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self._parse))
 
-    def _parse(self, model, messages, response_format):
+    def _parse(self, model, messages, response_format, **kwargs):
         self.calls += 1
         assert response_format is HitosBatch
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=HitosBatch(hitos=self.hitos)))])

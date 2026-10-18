@@ -10,6 +10,8 @@ import re
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from shared.llm import chat_params
+
 # Un hito debe caer dentro de los años del grupo de chunks, con este margen (en años).
 YEAR_MARGIN = 100
 MIN_YEAR = -10000
@@ -214,6 +216,7 @@ def extract_group(client: OpenAI, model: str, texts: list[str]) -> list[Extracte
         model=model,
         messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": body}],
         response_format=HitosBatch,
+        **chat_params(),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None:

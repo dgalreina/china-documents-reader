@@ -17,14 +17,16 @@ from dataclasses import dataclass
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from shared.llm import chat_params
+
 # Rango que acepta el filtro de búsqueda de china-history. Años a.C. en negativo.
 MIN_YEAR = -10000
 MAX_YEAR = 3000
 
 BATCH_SIZE = 10
-# Con 600 caracteres por chunk el modelo ya reconoce la época (mismo criterio
-# que tag-oxford-chunks-year.mjs en china-history).
-CHUNK_PREVIEW_CHARS = 600
+# Se manda el chunk ENTERO (≈1.200 caracteres): con solo los 600 primeros se perdían sitios que aparecen en la segunda mitad (p. ej. Laoniupo).
+# El tope es solo una red de seguridad por si algún día se usan chunks mucho más grandes: con los de hoy no llega a aplicarse nunca.
+MAX_CHUNK_CHARS_SENT = 4000
 DOC_HEAD_CHARS = 4000
 
 
@@ -154,6 +156,7 @@ def infer_document_period(client: OpenAI, model: str, head_text: str) -> Documen
             {"role": "user", "content": head_text[:DOC_HEAD_CHARS]},
         ],
         response_format=DocumentPeriod,
+        **chat_params(),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None:
@@ -170,7 +173,7 @@ def _label_batch(
         # Sin los años numéricos: con ellos el modelo tiende a copiarlos como respuesta.
         context = f"Descripción general del documento (solo orientación): {period.resumen}\n\n"
     body = "\n\n".join(
-        f"--- Fragmento {i} ---\n{text[:CHUNK_PREVIEW_CHARS]}" for i, text in enumerate(texts, start=1)
+        f"--- Fragmento {i} ---\n{text[:MAX_CHUNK_CHARS_SENT]}" for i, text in enumerate(texts, start=1)
     )
     completion = client.chat.completions.parse(
         model=model,
@@ -179,6 +182,7 @@ def _label_batch(
             {"role": "user", "content": context + body},
         ],
         response_format=BatchLabels,
+        **chat_params(),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None:

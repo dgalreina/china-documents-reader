@@ -108,9 +108,16 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   pruebas. 152 tests.
 - **Contador de coste** (`shared/usage.py`): `make_client()` devuelve un `TrackedClient` que cuenta tokens y coste estimado; cada CLI
   imprime su resumen y la extrapolacion al libro entero. Precios en `PRICES` (mayo 2026, de comparadores de terceros, NO de openai.com:
-  verificar) y sobrescribibles con `OPENAI_PRICES`. Medido con el Oxford (pags. 376-395): embed_label ≈ $0.055 y 0.7 min por 20 pags
-  (→ ≈ $2.3 y ≈ 28 min para las 825 pags); extract_hitos ≈ $2.84 y ≈ 19 min por cada 1000 chunks etiquetados (→ ≈ $4-5 para ~1500).
-  Libro completo ≈ $6-8 de OpenAI y ≈ 1 h en serie (+ pequenas llamadas del juez en write_mongo). Una sola muestra de 20 pags: orientativo.
+  verificar) y sobrescribibles con `OPENAI_PRICES`. Medido con el Oxford (pags. 376-395): embed_label ≈ $0.070 y 0.6-0.8 min por 20 pags
+  (→ ≈ $2.9 y ≈ 25-32 min para las 825 pags; medido con el chunk ENTERO y temperature 0; con solo 600 caracteres era ≈ $2.3); extract_hitos ≈ $2.84 y ≈ 19 min por cada 1000 chunks etiquetados (→ ≈ $4-5 para ~1500).
+  Libro completo ≈ $7-9 de OpenAI y ≈ 1 h en serie (+ pequenas llamadas del juez en write_mongo). Una sola muestra de 20 pags: orientativo.
+- **Etiquetado con el chunk ENTERO y temperature 0 (decidido por el usuario):** antes la IA solo veia los 600 primeros caracteres de cada chunk y se
+  perdian sitios de la segunda mitad (p. ej. Laoniupo). Ahora recibe el chunk entero (tope de seguridad 4000, `MAX_CHUNK_CHARS_SENT`). Todas las
+  llamadas de chat (etiquetado, hitos, juez de duplicados y juez de personajes) llevan `temperature=0` desde `shared/llm.py` (`OPENAI_TEMPERATURE`;
+  vacia para modelos que no admiten el parametro). Medido en 20 pags (dos ejecuciones): +27 % de coste, mas chunks con ubicacion (6-10 de ~48 frente a
+  4 de 38) y 38 de 48 chunks identicos entre ejecuciones: **reduce pero NO elimina la variacion**. Efecto secundario visto y corregido: la IA nombra
+  mas sitios, incluidos cortos y ambiguos, y Mapbox resolvia 'Feng' como 'Feng County' (Baoji), a ~200 km de la capital Feng de los Zhou; ahora, en
+  Mapbox, un nombre de hasta 5 letras solo se acepta si el resultado se llama EXACTAMENTE igual (`MAPBOX_SHORT_NAME_CHARS`).
 - **Handlers por tandas (listos para Step Functions, probados en local con servicios reales):** `embed_label.period_handler` (periodo del
   libro, una vez) y `embed_label.handler` (tanda de N chunks -> `jobs/<id>/labeled/<inicio>.json`), `extract_hitos.handler` (tanda ->
   `jobs/<id>/hitos/<inicio>.json`), `write_mongo.chunks_handler` / `hitos_handler` / `cleanup_handler`. Todo pasa por S3 y cada paso
@@ -188,6 +195,13 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   Calibrado con datos reales: el mismo hecho puntua 0.62-0.95 y hechos distintos 0.31-0.60 (se solapan, de ahi el juez). Con
   `--replace-source` los hitos viejos del mismo libro NO cuentan como existentes (si no, todo seria duplicado de la tanda anterior).
   `--keep-duplicates` lo desactiva. Los chunks NO se deduplican: que dos libros cuenten lo mismo es lo que quiere la busqueda y las citas.
+- **Heredar el anio de los vecinos en chunks sin fecha propia (DESCARTADO por ahora, decidido por el usuario):** hoy un chunk sin anio fiable va a pendientes
+  aunque su entorno este claro. Medido a mano: capitulo de los Zhou, 10 pendientes de 58 (6 notas al pie/bibliografia + ~4 de contenido, de los que ~3
+  pasarian una regla de vecinos coherentes); Oxford pags. 14-45, 18 de 86 (9 editorial + 9 de contenido, p. ej. Dadiwan o ceramica Yangshao). Es ~5 % del
+  libro, muestra pequena y clasificacion a ojo. Propuesta si se retoma: campo `es_contenido` en el etiquetado (editorial/notas/bibliografia/pies no heredan),
+  heredar solo si hay un vecino fechado antes y otro despues (a <= 3 chunks), sus rangos se solapan y la union <= MAX_SPAN_YEARS, y marcar `añoOrigen: "vecinos"`.
+  No hay forma de usar el periodo del capitulo porque no se detectan capitulos (el periodo del libro es demasiado ancho). Se mantiene la regla: todo anio
+  guardado sale del propio chunk. Retomar con el libro completo si se pierde mas de lo esperado.
 - **Mas cobertura de ubicacion:** ampliar `yacimientos.json` de china-history con los sitios que salgan sin resolver, o probar
   otra fuente (p. ej. Nominatim/OSM) si Wikidata se queda corto en otros libros.
 - **Para china-history (verificado en dev):** si prefiltran por caja geografica con un `$and` simple, los chunks SIN ubicacion
@@ -201,6 +215,13 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   lugar y que el nombre se parezca; y revisar a mano una muestra antes de fiarse de las métricas. Otros fallos que solo salieron revisando datos a mano:
   el pie de una foto de 1925 tomado como epoca del contenido (el prompt ahora lo excluye); un museo o una estacion de metro
   del mismo nombre tomados por el yacimiento (se priorizan los candidatos que parecen yacimiento).
+
+- **Login compartido con china-history (idea, no hecho):** hoy china-history es PUBLICA y sin login (comprobado: ni guards en NestJS ni auth en
+  Next.js), y solo esta app tiene login (Cognito). Si algun dia china-history lo necesita: mismo user pool de Cognito, un guard en su API que
+  valide el JWT con las claves publicas de Cognito (sin credenciales de AWS; el API sigue en DigitalOcean), y un DOMINIO PROPIO (sin el no se
+  puede compartir sesion entre las dos). Dos URLs (subdominios) o una (CloudFront con rutas /historia y /documentos y `basePath` en Next.js).
+  Para SSO estandar entre apps distintas lo normal es la Hosted UI de Cognito (pantalla de AWS con la marca propia), que contradice el
+  formulario propio decidido para el front: decidirlo ese dia. Una pantalla con un icono por app seria una pagina de dos enlaces tras el login.
 
 ## Comandos
 

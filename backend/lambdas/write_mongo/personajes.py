@@ -16,6 +16,8 @@ from typing import Callable
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from shared.llm import chat_params
+
 ERA_MARGIN = 60  # años de holgura alrededor de la actividad conocida (una generación)
 MIN_LATIN_FORM = 3  # un alias de 1-2 letras ("Wu") casaría con otras personas
 OF_SUFFIX = re.compile(r"\s+(of|de)\s+\w+$", re.IGNORECASE)
@@ -111,6 +113,7 @@ def judge(client: OpenAI, model: str, new: dict, existing: dict) -> SamePerson:
             {"role": "user", "content": f"FICHA NUEVA:\n{_brief(new)}\n\nFICHA EXISTENTE:\n{_brief(existing)}"},
         ],
         response_format=SamePerson,
+        **chat_params(),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None:
