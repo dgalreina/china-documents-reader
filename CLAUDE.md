@@ -179,9 +179,11 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   `GET /books/{slug}/pages/{page}/translation`: el navegador manda solo libro+página (nunca texto: sería traductor gratis con nuestra clave); la
   Lambda saca la página del PDF en `books/<slug>/original.pdf`. Medido (Oxford): ~5 s y ~0,01 USD por página; 3 páginas en paralelo tardan lo
   mismo que una. Los caracteres chinos se dejan y se aclaran entre paréntesis. Fallo visto y corregido: el modelo cambiaba números de nota.
-  **Pendiente:** copiar el PDF a `books/<slug>/original.pdf` SIN caducidad (hoy va a `uploads/`, que caduca a los 30 días), registrar la Lambda y
-  la ruta en el CDK (`BOOKS_BUCKET`), y borrar `translations/<slug>/` al reprocesar un libro con otro PDF. El front (`ReaderView`, scroll
-  continuo, inglés del PDF mientras llega el español, solo se pide la página a la vista ±1 tras 0,7 s) usa de momento la API simulada.
+  `lambdas/store_book` (último paso del flujo, tras Finalize) copia el PDF subido a `books/<slug>/original.pdf` en el bucket permanente
+  `BooksBucket` (sin caducidad, RETAIN) y borra `translations/<slug>/` (las del PDF anterior si se reprocesa). En el CDK: bucket, `StoreBookFn`,
+  `TranslatePageFn` (29 s: tope de API Gateway) y la ruta con JWT; validado con `cdk synth` y comprobación estructural del ASL, SIN desplegar.
+  El front (`ReaderView`, scroll continuo, inglés del PDF mientras llega el español, solo se pide la página a la vista ±1 tras 0,7 s) usa de
+  momento la API simulada. **Pendiente:** URL firmada de lectura del PDF para el visor, catálogo de libros y API real en el front.
 
 ## Ideas apuntadas (sin implementar)
 

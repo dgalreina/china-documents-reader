@@ -56,6 +56,24 @@ export class ChinaDocumentsStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
+    // Los libros: el PDF original (books/<libro>/original.pdf) y las traducciones al español (translations/<libro>/...). A diferencia del bucket
+    // de datos, NO caduca: el visor y el traductor necesitan el PDF mientras el libro exista. Tampoco se borra con el stack (son los libros del usuario).
+    const booksBucket = new s3.Bucket(this, 'BooksBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      cors: [
+        {
+          // Para que el visor (pdf.js, en el navegador) pueda leer el PDF con una URL firmada de lectura.
+          allowedMethods: [s3.HttpMethods.GET],
+          allowedOrigins: props.frontendOrigins,
+          allowedHeaders: ['*'],
+          maxAge: 3000,
+        },
+      ],
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     // Datos geográficos externos (CHGIS no se puede redistribuir: bucket privado, subido a mano una vez). No se borra con el stack.
     const geodataBucket = new s3.Bucket(this, 'GeodataBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -80,6 +98,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       GEODATA_BUCKET: geodataBucket.bucketName,
       JOBS_TABLE: jobs.tableName,
       UPLOAD_BUCKET: dataBucket.bucketName,
+      BOOKS_BUCKET: booksBucket.bucketName,
       MONGO_TARGET: props.mongoTarget, // dev o prod lo decide SOLO el despliegue, nunca el evento
       MAX_SPAN_YEARS: String(maxSpanYears),
     };
@@ -104,18 +123,25 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const writeChunks = fn('WriteChunksFn', 'lambdas.write_mongo.handler.chunks_handler', 300, 512);
     const writeHitos = fn('WriteHitosFn', 'lambdas.write_mongo.handler.hitos_handler', 840, 1024);
     const finalize = fn('FinalizeFn', 'lambdas.write_mongo.handler.finalize_handler', 300, 512);
+    const storeBook = fn('StoreBookFn', 'lambdas.store_book.handler.handler', 120, 256);
+    // 29 s: API Gateway (HTTP API) corta cualquier integración a los 30 s, así que una Lambda más lenta no serviría de nada. Una página tarda ~5-8 s.
+    // 512 MB de /tmp (el de por defecto) bastan: el PDF (hasta 100 MB) se baja ahí una vez y la Lambda "caliente" lo reutiliza.
+    const translate = fn('TranslatePageFn', 'lambdas.translate_page.handler.handler', 29, 512);
 
     // Permisos mínimos para cada una.
     dataBucket.grantPut(presign); // firma subidas: necesita poder escribir en esa clave
     jobs.grantWriteData(presign);
     jobs.grantReadData(jobStatus);
     for (const f of [extractChunk, embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos]) dataBucket.grantReadWrite(f);
+    dataBucket.grantRead(storeBook); // lee el PDF subido...
+    booksBucket.grantReadWrite(storeBook); // ...lo copia al bucket permanente y borra las traducciones viejas del libro
+    booksBucket.grantReadWrite(translate); // lee el PDF y lee/escribe la caché de traducciones
     for (const f of [embedBatch, extractHitos]) geodataBucket.grantRead(f); // geocodifican con CHGIS y las listas de china-history
     const readSecrets = new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
       resources: [cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: `${ssmPrefix.replace(/^\//, '')}/*`, arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME }, this)],
     });
-    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize]) f.addToRolePolicy(readSecrets);
+    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate]) f.addToRolePolicy(readSecrets); // translate: solo la clave de OpenAI
 
     // ------------------------------------------------------------------------------------------------- Step Functions
     const jobKey = { jobId: tasks.DynamoAttributeValue.fromString(sfn.JsonPath.stringAt('$.jobId')) };
@@ -268,15 +294,23 @@ export class ChinaDocumentsStack extends cdk.Stack {
       '$.summary',
     );
 
+    // Último paso: guardar el PDF de forma permanente (y limpiar las traducciones viejas si es un reproceso).
+    const storeBookStep = invoke(
+      'StoreBook',
+      storeBook,
+      sfn.TaskInput.fromObject({ 'bucket.$': '$.bucket', 'key.$': '$.key', 'source.$': '$.job.Item.source.S' }),
+      sfn.JsonPath.DISCARD,
+    );
+
     const jobFailed = new sfn.Fail(this, 'JobFailed', { error: 'JobFailed', cause: 'Mira el campo error del registro del trabajo en DynamoDB' });
     markFailed.next(jobFailed);
-    for (const step of [getJob, markRunning, extractStep, periodStep, embedMap, extractMap, writeMap, finalizeStep, markDone]) {
+    for (const step of [getJob, markRunning, extractStep, periodStep, embedMap, extractMap, writeMap, finalizeStep, storeBookStep, markDone]) {
       step.addCatch(markFailed, { resultPath: '$.error' }); // cualquier fallo deja el trabajo en FAILED con su motivo
     }
 
     const afterExtract = new sfn.Choice(this, 'IsScannedPdf')
       .when(sfn.Condition.booleanEquals('$.extract.scanned', true), markNeedsOcr.next(new sfn.Fail(this, 'NeedsOcr', { error: 'NeedsOcr', cause: 'PDF escaneado: hace falta OCR' })))
-      .otherwise(periodStep.next(makeBatches).next(embedMap).next(extractMap).next(writeMap).next(finalizeStep).next(markDone).next(new sfn.Succeed(this, 'JobDone')));
+      .otherwise(periodStep.next(makeBatches).next(embedMap).next(extractMap).next(writeMap).next(finalizeStep).next(storeBookStep).next(markDone).next(new sfn.Succeed(this, 'JobDone')));
 
     const stateMachine = new sfn.StateMachine(this, 'Pipeline', {
       definitionBody: sfn.DefinitionBody.fromChainable(parse.next(getJob).next(markRunning).next(extractStep).next(afterExtract)),
@@ -342,6 +376,13 @@ export class ChinaDocumentsStack extends cdk.Stack {
     });
     api.addRoutes({ path: '/uploads', methods: [apigw.HttpMethod.POST], integration: new integrations.HttpLambdaIntegration('PresignIntegration', presign) });
     api.addRoutes({ path: '/jobs/{jobId}', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobStatusIntegration', jobStatus) });
+    // La traducción de una página: el navegador manda solo libro y página (nunca texto). Va detrás del mismo autorizador JWT que el resto (es el
+    // defaultAuthorizer de la API) y bajo el mismo freno de peticiones.
+    api.addRoutes({
+      path: '/books/{slug}/pages/{page}/translation',
+      methods: [apigw.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('TranslateIntegration', translate),
+    });
     // Freno de peticiones: aunque alguien robara un token, no puede lanzar cientos de trabajos (cada PDF cuesta dinero en OpenAI).
     const defaultStage = api.defaultStage?.node.defaultChild as apigw.CfnStage;
     defaultStage.defaultRouteSettings = { throttlingBurstLimit: 5, throttlingRateLimit: 2 };
@@ -351,6 +392,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: webClient.userPoolClientId });
     new cdk.CfnOutput(this, 'DataBucketName', { value: dataBucket.bucketName });
+    new cdk.CfnOutput(this, 'BooksBucketName', { value: booksBucket.bucketName });
     new cdk.CfnOutput(this, 'GeodataBucketName', { value: geodataBucket.bucketName });
     new cdk.CfnOutput(this, 'StateMachineArn', { value: stateMachine.stateMachineArn });
     new cdk.CfnOutput(this, 'MongoTarget', { value: props.mongoTarget });

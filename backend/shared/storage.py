@@ -16,6 +16,8 @@ class Storage(Protocol):
     def put_json(self, bucket: str, key: str, data: Any) -> None: ...
     def get_json(self, bucket: str, key: str) -> Any: ...
     def try_get_json(self, bucket: str, key: str) -> Any | None: ...
+    def copy(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str) -> None: ...
+    def delete_prefix(self, bucket: str, prefix: str) -> int: ...
 
 
 class S3Storage:
@@ -50,6 +52,22 @@ class S3Storage:
         except self.client.exceptions.NoSuchKey:
             return None
 
+    def copy(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str) -> None:
+        """Copia dentro de S3 (no baja el fichero: lo copia S3 por dentro). `copy` hace copia multiparte si pesa mucho."""
+        self.client.copy({"Bucket": src_bucket, "Key": src_key}, dst_bucket, dst_key)
+
+    def delete_prefix(self, bucket: str, prefix: str) -> int:
+        """Borra todo lo que empieza por `prefix` y devuelve cuántos objetos eran. El prefijo no puede ser vacío (borraría el bucket entero)."""
+        if not prefix:
+            raise ValueError("prefijo vacío: se borraría todo el bucket")
+        deleted = 0
+        for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+            keys = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+            if keys:
+                self.client.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
+                deleted += len(keys)
+        return deleted
+
 
 class LocalStorage:
     """Imita un bucket con una carpeta: <raíz>/<bucket>/<clave>. Para probar sin AWS."""
@@ -79,3 +97,19 @@ class LocalStorage:
             return self.get_json(bucket, key)
         except FileNotFoundError:
             return None
+
+    def copy(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str) -> None:
+        target = self._path(dst_bucket, dst_key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self._path(src_bucket, src_key), target)
+
+    def delete_prefix(self, bucket: str, prefix: str) -> int:
+        if not prefix:
+            raise ValueError("prefijo vacío: se borraría todo el bucket")
+        base = self._path(bucket, ".keep").parent  # carpeta del bucket
+        count = 0
+        for path in list(base.rglob("*")):
+            if path.is_file() and path.relative_to(base).as_posix().startswith(prefix):
+                path.unlink()
+                count += 1
+        return count

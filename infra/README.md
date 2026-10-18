@@ -15,12 +15,13 @@ PDF subido a S3 ─► EventBridge ─► Step Functions ─► Lambdas (Python)
 | Recurso | Para qué |
 |---|---|
 | Bucket `DataBucket` | PDFs subidos (`uploads/`) y ficheros intermedios de cada trabajo (`jobs/<id>/`). Se borra solo a los 30 días. |
+| Bucket `BooksBucket` | Los libros: el PDF original (`books/<libro>/original.pdf`) y las traducciones al español (`translations/<libro>/...`). **No caduca** y no se borra con el stack. |
 | Bucket `GeodataBucket` | Datos geográficos externos (CHGIS no se puede redistribuir). Privado y no se borra con el stack. |
 | Tabla `JobsTable` (DynamoDB) | Estado de cada trabajo (UPLOADING, RUNNING, DONE, FAILED, NEEDS_OCR) y su resumen. Pago por uso; caduca a los 30 días. |
-| 9 Lambdas (Python 3.11) | `presign`, `jobs`, `extract_chunk`, periodo del libro, etiquetar+embeddings, hitos, y 3 de escritura en Mongo. |
+| 11 Lambdas (Python 3.11) | `presign`, `jobs`, `extract_chunk`, periodo del libro, etiquetar+embeddings, hitos, 3 de escritura en Mongo, `store_book` (guarda el PDF de forma permanente al final del flujo) y `translate_page` (traduce una página al español, con caché). |
 | Step Functions (Standard) | Reparte el libro en tandas de 100 chunks (hasta 5 a la vez), y escribe hitos y personajes **de uno en uno**. Se puede reanudar desde el paso fallido (*redrive*). |
 | Cognito | Un solo usuario, sin registro abierto. |
-| API Gateway (HTTP) | `POST /uploads` y `GET /jobs/{jobId}`, ambas exigen un token de Cognito. Limitada a 2 peticiones/s. |
+| API Gateway (HTTP) | `POST /uploads`, `GET /jobs/{jobId}` y `GET /books/{slug}/pages/{page}/translation`, todas exigen un token de Cognito. Limitada a 2 peticiones/s (ráfaga de 5). La traducción solo recibe libro y página, nunca texto; su Lambda dura como mucho 29 s porque API Gateway corta a los 30. |
 
 El login en la web **no** protege la API por sí solo (cualquiera podría llamarla directamente): por eso la API valida el token.
 
@@ -82,4 +83,5 @@ aws cognito-idp admin-initiate-auth --user-pool-id <UserPoolId> --client-id <Use
 - **AWS**: Lambda, Step Functions, DynamoDB, S3, EventBridge y Cognito tienen capa gratuita o cuestan céntimos con este uso. El gasto
   real es **OpenAI** (≈ 6-8 USD por un libro de 800 páginas, medido; ver CLAUDE.md). Hay un presupuesto de 10 USD con alerta en AWS Budgets.
 - Los secretos nunca van en variables de entorno ni en el repositorio.
-- `cdk destroy` borra todo menos el bucket de datos geográficos.
+- `cdk destroy` borra todo menos los buckets de libros y de datos geográficos (son datos del usuario). Si se quieren borrar de verdad, vaciarlos y eliminarlos a mano.
+- La traducción cuesta ≈ 0,01 USD por página (medido con `gpt-4o`) y solo se paga una vez por página: queda en `translations/`.
