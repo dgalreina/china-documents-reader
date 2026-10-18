@@ -89,7 +89,7 @@ TRACKER = UsageTracker()
 
 
 class TrackedClient:
-    """Envuelve el cliente de OpenAI y apunta los tokens de `chat.completions.parse` y `embeddings.create`.
+    """Envuelve el cliente de OpenAI y apunta los tokens de `chat.completions.parse`, `chat.completions.create` y `embeddings.create`.
 
     Expone las mismas rutas que usa el código (`client.chat.completions.parse`, `client.embeddings.create`), así que se puede
     pasar donde se pasaba el cliente normal.
@@ -97,11 +97,19 @@ class TrackedClient:
 
     def __init__(self, client, tracker: UsageTracker = TRACKER):
         self._client, self.tracker = client, tracker
-        self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self._parse))
+        self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self._parse, create=self._create))
         self.embeddings = SimpleNamespace(create=self._embed)
 
     def _parse(self, **kwargs):
         completion = self._client.chat.completions.parse(**kwargs)
+        usage = getattr(completion, "usage", None)
+        if usage is not None:
+            self.tracker.record(kwargs.get("model", "desconocido"), usage.prompt_tokens, usage.completion_tokens)
+        return completion
+
+    def _create(self, **kwargs):
+        # Respuesta de texto libre (la traducción), sin esquema estructurado: se cuenta igual.
+        completion = self._client.chat.completions.create(**kwargs)
         usage = getattr(completion, "usage", None)
         if usage is not None:
             self.tracker.record(kwargs.get("model", "desconocido"), usage.prompt_tokens, usage.completion_tokens)

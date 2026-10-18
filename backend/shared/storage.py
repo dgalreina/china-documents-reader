@@ -15,6 +15,7 @@ class Storage(Protocol):
     def download(self, bucket: str, key: str, path: Path) -> None: ...
     def put_json(self, bucket: str, key: str, data: Any) -> None: ...
     def get_json(self, bucket: str, key: str) -> Any: ...
+    def try_get_json(self, bucket: str, key: str) -> Any | None: ...
 
 
 class S3Storage:
@@ -42,6 +43,14 @@ class S3Storage:
         return json.loads(self.client.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8"))
 
 
+    def try_get_json(self, bucket: str, key: str) -> Any | None:
+        """Como get_json, pero devuelve None si la clave no existe (para cachés)."""
+        try:
+            return self.get_json(bucket, key)
+        except self.client.exceptions.NoSuchKey:
+            return None
+
+
 class LocalStorage:
     """Imita un bucket con una carpeta: <raíz>/<bucket>/<clave>. Para probar sin AWS."""
 
@@ -64,3 +73,9 @@ class LocalStorage:
 
     def get_json(self, bucket: str, key: str) -> Any:
         return json.loads(self._path(bucket, key).read_text(encoding="utf-8"))
+
+    def try_get_json(self, bucket: str, key: str) -> Any | None:
+        try:
+            return self.get_json(bucket, key)
+        except FileNotFoundError:
+            return None

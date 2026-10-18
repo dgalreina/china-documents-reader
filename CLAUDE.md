@@ -174,6 +174,15 @@ El hito lleva `personajes: [{id, rol, rol_en, rol_zh?, menciones}]`. Probado: tr
 rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida en enlace funcionan. Produccion intacta (sin coleccion
 `personajes`). 123 tests. **Pendiente en china-history (su agente):** schema, endpoints y enlaces en la UI.
 
+- **Traducción al español para leer (independiente del pipeline, no toca Mongo ni `book_chunks`):** `backend/lambdas/translate_page` traduce UNA
+  página con `gpt-4o` y la guarda en `translations/<slug>/<VERSION_PROMPT>/<página>.json` (la versión va en la clave). Handler
+  `GET /books/{slug}/pages/{page}/translation`: el navegador manda solo libro+página (nunca texto: sería traductor gratis con nuestra clave); la
+  Lambda saca la página del PDF en `books/<slug>/original.pdf`. Medido (Oxford): ~5 s y ~0,01 USD por página; 3 páginas en paralelo tardan lo
+  mismo que una. Los caracteres chinos se dejan y se aclaran entre paréntesis. Fallo visto y corregido: el modelo cambiaba números de nota.
+  **Pendiente:** copiar el PDF a `books/<slug>/original.pdf` SIN caducidad (hoy va a `uploads/`, que caduca a los 30 días), registrar la Lambda y
+  la ruta en el CDK (`BOOKS_BUCKET`), y borrar `translations/<slug>/` al reprocesar un libro con otro PDF. El front (`ReaderView`, scroll
+  continuo, inglés del PDF mientras llega el español, solo se pide la página a la vista ±1 tras 0,7 s) usa de momento la API simulada.
+
 ## Ideas apuntadas (sin implementar)
 
 - **Tope de amplitud del rango de anios (HECHO):** un rango de mas de `MAX_SPAN_YEARS` (2000 por defecto, configurable por entorno) va a

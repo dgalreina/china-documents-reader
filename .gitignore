@@ -11,3 +11,6 @@ dist/
 .DS_Store
 infra/build/
 infra/dist/
+
+# caché local de la traducción de prueba
+.translate-cache/
