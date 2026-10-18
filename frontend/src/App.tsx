@@ -2,14 +2,18 @@ import { useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
 import { Drawer } from './components/Drawer';
+import { PdfGate } from './components/PdfGate';
 import { PdfViewer } from './components/PdfViewer';
+import { ReaderView } from './components/ReaderView';
 import { AgentTab } from './components/tabs/AgentTab';
 import { FilesTab } from './components/tabs/FilesTab';
 import { HitosTab } from './components/tabs/HitosTab';
 import { PersonajesTab } from './components/tabs/PersonajesTab';
 import { ProgressTab } from './components/tabs/ProgressTab';
 import { LibraryProvider, useBookData, useLibrary } from './state/Library';
-import type { TabId } from './types';
+import { useTranslations } from './state/Translations';
+import { usePdfDocument } from './state/usePdfDocument';
+import type { JumpTarget, ReadMode, TabId } from './types';
 
 export default function App() {
   return (
@@ -33,6 +37,16 @@ function Home() {
 
 const isDesktop = () => window.matchMedia('(min-width: 768px)').matches;
 
+const MODE_KEY = 'reader-mode';
+// El modo de lectura elegido se recuerda entre visitas. El almacenamiento del navegador puede fallar (ventana privada...): entonces, original.
+const loadMode = (): ReadMode => {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'es' ? 'es' : 'original';
+  } catch {
+    return 'original';
+  }
+};
+
 function Workspace() {
   const { slug } = useParams();
   const navigate = useNavigate();
@@ -43,23 +57,35 @@ function Workspace() {
   const [drawerOpen, setDrawerOpen] = useState(isDesktop);
   const [tab, setTab] = useState<TabId>('hitos');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageCount, setPageCount] = useState(0);
-  const [target, setTarget] = useState<{ page: number; nonce: number } | null>(null);
+  const [target, setTarget] = useState<JumpTarget | null>(null);
+  const [mode, setMode] = useState<ReadMode>(loadMode);
   // PDF abierto desde el ordenador para un libro que no tiene PDF propio en la maqueta.
   const [localPdf, setLocalPdf] = useState<{ slug: string; url: string } | null>(null);
 
   const { hitos, personajes } = useBookData(book?.slug, book?.status);
   const pdfUrl = book?.pdfUrl ?? (localPdf && localPdf.slug === slug ? localPdf.url : undefined);
+  const pdf = usePdfDocument(pdfUrl);
+  const pageCount = pdf.doc?.numPages ?? 0;
+  const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null);
   const activeJobs = jobs.filter((job) => job.status === 'UPLOADING' || job.status === 'QUEUED' || job.status === 'RUNNING').length;
 
   const goToPage = (page: number) => {
     setTarget({ page, nonce: Date.now() });
     if (!isDesktop()) setDrawerOpen(false); // en el móvil, el panel taparía la página a la que se salta
   };
+  const changeMode = (next: ReadMode) => {
+    if (next === mode) return;
+    setMode(next);
+    try {
+      localStorage.setItem(MODE_KEY, next);
+    } catch {
+      /* sin almacenamiento: no se recuerda, y ya */
+    }
+    setTarget({ page: currentPage, nonce: Date.now(), instant: true }); // el otro visor arranca en la página que se estaba leyendo
+  };
   const select = (nextSlug: string) => {
     navigate(`/libros/${nextSlug}`);
     setCurrentPage(1);
-    setPageCount(0);
     setTarget(null);
     if (!isDesktop()) setDrawerOpen(false);
   };
@@ -68,7 +94,21 @@ function Workspace() {
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-line bg-paper px-4 py-2">
         <h1 className="min-w-0 flex-1 truncate font-brush text-lg font-bold">{book ? book.title : 'China Documents Reader'}</h1>
-        {book && pdfUrl && pageCount > 0 && <span className="shrink-0 text-sm text-stone">Pág. {currentPage} / {pageCount}</span>}
+        {book && pdfUrl && (
+          <div className="flex shrink-0 overflow-hidden rounded border border-line text-sm font-semibold" role="group" aria-label="Modo de lectura">
+            {(['original', 'es'] as const).map((value) => (
+              <button
+                key={value}
+                onClick={() => changeMode(value)}
+                aria-pressed={mode === value}
+                className={`px-3 py-1.5 ${mode === value ? 'bg-seal text-white' : 'bg-white text-stone hover:text-ink'}`}
+              >
+                {value === 'original' ? 'Original' : 'Español'}
+              </button>
+            ))}
+          </div>
+        )}
+        {book && pdfUrl && pageCount > 0 && <span className="hidden shrink-0 text-sm text-stone sm:inline">Pág. {currentPage} / {pageCount}</span>}
         <button
           onClick={() => setDrawerOpen((open) => !open)}
           aria-expanded={drawerOpen}
@@ -84,13 +124,15 @@ function Workspace() {
           {slug && !book ? (
             <div className="flex h-full items-center justify-center p-6 text-center text-stone">No existe el libro «{slug}».</div>
           ) : book ? (
-            <PdfViewer
-              url={pdfUrl}
-              target={target}
-              onPageChange={setCurrentPage}
-              onLoaded={setPageCount}
-              onPickLocal={(file) => setLocalPdf({ slug: book.slug, url: URL.createObjectURL(file) })}
-            />
+            <PdfGate url={pdfUrl} pdf={pdf} onPickLocal={(file) => setLocalPdf({ slug: book.slug, url: URL.createObjectURL(file) })}>
+              {(doc) =>
+                mode === 'es' ? (
+                  <ReaderView key={pdfUrl} doc={doc} translations={translations} target={target} onPageChange={setCurrentPage} />
+                ) : (
+                  <PdfViewer key={pdfUrl} doc={doc} ratio={pdf.ratio} target={target} onPageChange={setCurrentPage} />
+                )
+              }
+            </PdfGate>
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-stone">No hay ningún libro. Abre el panel y sube un PDF.</div>
           )}

@@ -1,4 +1,4 @@
-import type { Book, ChatMessage, Hito, Job, Personaje } from '../types';
+import type { Book, ChatMessage, Hito, Job, PageTranslation, Personaje } from '../types';
 
 export interface UploadOptions {
   /** Identificador del libro (el `source` de MongoDB): minúsculas, números y guiones. */
@@ -21,6 +21,8 @@ export interface ApiClient {
   startUpload(file: File, options: UploadOptions): Promise<{ jobId: string }>;
   /** Pregunta al agente. `slug` null = preguntar a todos los libros. */
   ask(slug: string | null, question: string): Promise<ChatMessage>;
+  /** Traduce una página al español (la primera vez tarda unos segundos; después sale de la caché). Rechaza con un mensaje en español. */
+  getTranslation(slug: string, page: number): Promise<PageTranslation>;
   /** Avisa cuando cambian libros o trabajos (progreso, cola...). Devuelve la función para dejar de escuchar. */
   subscribe(listener: () => void): () => void;
 }

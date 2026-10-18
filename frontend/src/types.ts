@@ -88,3 +88,19 @@ export interface ChatMessage {
 }
 
 export type TabId = 'archivos' | 'progreso' | 'hitos' | 'personajes' | 'agente';
+
+/** Petición de saltar a una página. `nonce` cambia en cada petición; `instant`: sin animación (al cambiar de modo de lectura). */
+export interface JumpTarget {
+  page: number;
+  nonce: number;
+  instant?: boolean;
+}
+
+export type ReadMode = 'original' | 'es';
+
+/** Una página traducida al español. `cached`: ya estaba guardada (llega al instante y no cuesta nada). */
+export interface PageTranslation {
+  page: number;
+  text: string;
+  cached: boolean;
+}

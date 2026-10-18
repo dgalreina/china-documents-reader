@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import * as pdfjs from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-
-// pdf.js hace el trabajo pesado en un "worker" (un hilo aparte) para no congelar la página.
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+import type { JumpTarget } from '../types';
 
 const PAGE_GAP = 16; // px entre páginas
 const SIDE_PADDING = 24; // px de margen a cada lado
@@ -12,63 +8,36 @@ const BUFFER_PAGES = 2; // páginas de más que se dibujan por delante y por det
 const MAX_PAGE_WIDTH = 900; // en pantallas grandes la página no se estira más
 
 interface PdfViewerProps {
-  url?: string;
+  doc: PDFDocumentProxy;
+  /** alto/ancho de una página. */
+  ratio: number;
   /** Pide saltar a una página. `nonce` cambia en cada petición para poder volver a saltar a la misma. */
-  target: { page: number; nonce: number } | null;
+  target: JumpTarget | null;
   onPageChange: (page: number) => void;
-  onLoaded: (pageCount: number) => void;
-  /** Sin PDF disponible, el visor ofrece abrir uno desde el ordenador. */
-  onPickLocal: (file: File) => void;
 }
 
-export function PdfViewer({ url, target, onPageChange, onLoaded, onPickLocal }: PdfViewerProps) {
+export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [width, setWidth] = useState(0);
-  const [ratio, setRatio] = useState(1.414); // alto/ancho de una página (A4 por defecto; se corrige con la del documento)
   const [range, setRange] = useState({ first: 1, last: 1 });
   const lastReportedPage = useRef(0);
 
-  // Las funciones del padre cambian en cada render: se guardan en una referencia para no recargar el PDF por eso.
-  const callbacks = useRef({ onPageChange, onLoaded });
-  callbacks.current = { onPageChange, onLoaded };
+  // La función del padre cambia en cada render: se guarda en una referencia para no repetir efectos por eso.
+  const callbacks = useRef({ onPageChange });
+  callbacks.current = { onPageChange };
 
-  // 1. Cargar el documento.
   useEffect(() => {
-    setDoc(null);
-    setError(null);
     lastReportedPage.current = 0;
-    if (!url) return;
-    let cancelled = false;
-    const task = pdfjs.getDocument({ url });
-    task.promise
-      .then(async (loaded) => {
-        if (cancelled) return; // la limpieza ya destruyó la tarea de carga, y con ella el documento
-        const viewport = (await loaded.getPage(1)).getViewport({ scale: 1 });
-        if (cancelled) return;
-        setRatio(viewport.height / viewport.width);
-        setDoc(loaded);
-        callbacks.current.onLoaded(loaded.numPages);
-      })
-      .catch(() => {
-        if (!cancelled) setError('No se pudo abrir el PDF. Si es el de muestra, comprueba que existe frontend/public/samples/oxford-zhou.pdf.');
-      });
-    return () => {
-      cancelled = true;
-      void task.destroy();
-    };
-  }, [url]);
+  }, [doc]);
 
-  // 2. Medir el ancho disponible (se adapta al girar el móvil o al plegar el panel).
+  // Medir el ancho disponible (se adapta al girar el móvil o al plegar el panel).
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
     observer.observe(element);
     return () => observer.disconnect();
-    // El contenedor del scroll solo existe cuando ya hay documento: hay que volver a engancharse entonces.
-  }, [doc]);
+  }, []);
 
   const pageWidth = Math.max(0, Math.min(width - SIDE_PADDING * 2, MAX_PAGE_WIDTH));
   const pageHeight = pageWidth * ratio;
@@ -96,30 +65,8 @@ export function PdfViewer({ url, target, onPageChange, onLoaded, onPickLocal }: 
   useEffect(() => {
     if (!target || !scrollRef.current || !doc) return;
     const page = Math.min(doc.numPages, Math.max(1, target.page));
-    scrollRef.current.scrollTo({ top: (page - 1) * slot, behavior: 'smooth' });
+    scrollRef.current.scrollTo({ top: (page - 1) * slot, behavior: target.instant ? 'auto' : 'smooth' });
   }, [target, doc, slot]);
-
-  if (!url) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        <p className="max-w-sm text-stone">Este libro no tiene PDF disponible en la maqueta.</p>
-        <label className="cursor-pointer rounded bg-seal px-4 py-2 text-sm font-semibold text-white hover:bg-seal-dark">
-          Abrir un PDF desde mi ordenador
-          <input
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) onPickLocal(file);
-            }}
-          />
-        </label>
-      </div>
-    );
-  }
-  if (error) return <div className="flex h-full items-center justify-center p-6 text-center text-seal-dark">{error}</div>;
-  if (!doc) return <div className="flex h-full items-center justify-center text-stone">Cargando el PDF…</div>;
 
   return (
     <div ref={scrollRef} onScroll={updateRange} className="h-full overflow-y-auto bg-paper-dark" data-testid="pdf-scroll">

@@ -134,6 +134,41 @@ describe('agente', () => {
   });
 });
 
+describe('traducción', () => {
+  const translate = async (slug: string, page: number) => {
+    const pending = api.getTranslation(slug, page);
+    await vi.advanceTimersByTimeAsync(3000);
+    return pending;
+  };
+
+  it('la primera vez tarda y no viene de la caché; la segunda sale al instante y sí', async () => {
+    api = new MockApi({ translateMs: 1000 });
+    const pending = api.getTranslation(SAMPLE_SLUG, 3);
+    let done = false;
+    void pending.then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(done).toBe(false); // aún traduciendo
+    await vi.advanceTimersByTimeAsync(600);
+    expect(await pending).toMatchObject({ page: 3, cached: false });
+
+    const again = api.getTranslation(SAMPLE_SLUG, 3);
+    await vi.advanceTimersByTimeAsync(30);
+    expect(await again).toMatchObject({ page: 3, cached: true });
+  });
+
+  it('rechaza un libro o una página que no existen, con mensaje en español', async () => {
+    await expect(api.getTranslation('no-existe', 1)).rejects.toThrow(/libro/);
+    await expect(api.getTranslation(SAMPLE_SLUG, 0)).rejects.toThrow(/página/);
+    await expect(api.getTranslation(SAMPLE_SLUG, 21)).rejects.toThrow(/página/); // la muestra tiene 20
+  });
+
+  it('el texto trae párrafos separados y conserva los caracteres chinos', async () => {
+    const { text } = await translate(SAMPLE_SLUG, 2);
+    expect(text.split('\n\n').length).toBeGreaterThan(1);
+    expect(text).toMatch(/周武王/);
+  });
+});
+
 describe('subscribe', () => {
   it('avisa de los cambios y deja de avisar al darse de baja', async () => {
     const listener = vi.fn();

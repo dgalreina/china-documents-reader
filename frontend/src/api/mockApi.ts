@@ -1,5 +1,5 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, ChatMessage, Hito, Job, Personaje } from '../types';
+import type { Book, BookStats, ChatMessage, Hito, Job, PageTranslation, Personaje } from '../types';
 import type { ApiClient, UploadOptions } from './client';
 
 // ---- Datos de ejemplo ------------------------------------------------------------------------------------------------------------------
@@ -54,6 +54,8 @@ interface MockOptions {
   uploadMs?: number;
   /** Retraso de la respuesta del agente. */
   askMs?: number;
+  /** Lo que tarda en traducirse una página que no estaba en caché (la real tarda ~5 s). */
+  translateMs?: number;
 }
 
 /** Id de 32 caracteres hexadecimales, como los del backend. `crypto.randomUUID` solo existe en contextos seguros (no en http por red local). */
@@ -84,6 +86,7 @@ export class MockApi implements ApiClient {
   private running: string | null = null;
   private queue: string[] = [];
   private steps = new Map<string, Step[]>();
+  private translated = new Set<string>(); // "slug:página" ya traducidas: la segunda vez salen al instante, como con la caché real
 
   constructor(private options: MockOptions = {}) {
     const now = new Date().toISOString();
@@ -225,6 +228,25 @@ export class MockApi implements ApiClient {
     const next = this.queue.shift();
     this.refreshQueue();
     if (next) this.run(next);
+  }
+
+  getTranslation(slug: string, page: number): Promise<PageTranslation> {
+    const book = this.books.find((candidate) => candidate.slug === slug);
+    if (!book) return Promise.reject(new Error('No existe ese libro.'));
+    if (page < 1 || (book.pageCount > 0 && page > book.pageCount)) return Promise.reject(new Error('Esa página no existe en el libro.'));
+    const key = `${slug}:${page}`;
+    const cached = this.translated.has(key);
+    const text = [
+      `[Traducción simulada de la página ${page}] Aquí aparecería el texto de la página en español, con los párrafos ya reconstruidos.`,
+      'Los caracteres chinos se dejan tal cual y llevan su aclaración: 周武王 (Zhou Wuwang, el rey Wu de Zhou) derrotó a los Shang en Muye 牧野 (Muye, llanura al sur de Yin).¹²',
+      `¹² Nota al pie simulada de la página ${page}.`,
+    ].join('\n\n');
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        this.translated.add(key);
+        resolve({ page, text, cached });
+      }, cached ? 20 : this.options.translateMs ?? 2500),
+    );
   }
 
   ask(slug: string | null, question: string): Promise<ChatMessage> {
