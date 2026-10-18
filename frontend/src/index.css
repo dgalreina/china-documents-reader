@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Paleta de china-history (papel envejecido + tinta, con acento verde-sello imperial). Es provisional: el diseño visual se afina más adelante. */
+:root {
+  --color-paper: #e9e7e2;
+  --color-paper-dark: #d6d3cb;
+  --color-ink: #1d1b19;
+  --color-ink-soft: #322f2b;
+  --color-stone: #6b6862;
+  --color-stone-light: #a5a29a;
+  --color-seal: #2c6e64;
+  --color-seal-dark: #1f5049;
+  --color-line: #cfcbc0;
+}
+
+@theme inline {
+  --color-paper: var(--color-paper);
+  --color-paper-dark: var(--color-paper-dark);
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-stone: var(--color-stone);
+  --color-stone-light: var(--color-stone-light);
+  --color-seal: var(--color-seal);
+  --color-seal-dark: var(--color-seal-dark);
+  --color-line: var(--color-line);
+
+  --font-sans: "Manrope", system-ui, sans-serif;
+  --font-brush: "Noto Serif SC", serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
