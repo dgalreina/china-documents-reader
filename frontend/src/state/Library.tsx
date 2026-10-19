@@ -12,6 +12,8 @@ interface LibraryValue {
   error: string | null;
   reload: () => void;
   upload: (file: File, options: UploadOptions) => Promise<{ jobId: string }>;
+  /** Borra un libro con todo lo suyo y refresca la lista. */
+  remove: (slug: string) => Promise<void>;
 }
 
 const LibraryContext = createContext<LibraryValue | null>(null);
@@ -42,7 +44,19 @@ export function LibraryProvider({ api, children }: { api: ApiClient; children: R
   }, [api, refresh]);
 
   const value = useMemo<LibraryValue>(
-    () => ({ api, books, jobs, loaded, error, reload: () => void refresh(), upload: (file, options) => api.startUpload(file, options) }),
+    () => ({
+      api,
+      books,
+      jobs,
+      loaded,
+      error,
+      reload: () => void refresh(),
+      upload: (file, options) => api.startUpload(file, options),
+      remove: async (slug) => {
+        await api.deleteBook(slug);
+        await refresh();
+      },
+    }),
     [api, books, jobs, loaded, error, refresh],
   );
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>;

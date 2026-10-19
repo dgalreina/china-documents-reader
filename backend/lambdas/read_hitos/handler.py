@@ -10,23 +10,14 @@ app y por el libro: nunca devuelve hitos de china-history. La petición ya llega
 import json
 import os
 
-from pymongo import MongoClient
-
 from ..presign.signer import SOURCE_PATTERN
-from ..write_mongo.store import ORIGIN, resolve_target
+from ..write_mongo.store import ORIGIN, cached_database
 
 MAX_HITOS = 500  # tope por libro: la respuesta cabe de sobra en API Gateway y la pantalla no pinta más
 HEADERS = {"Content-Type": "application/json"}
 
-_db = None  # el cliente de Mongo se reutiliza entre peticiones de una Lambda "caliente": conectar cuesta ~1 s
-
-
 def _database():
-    global _db
-    if _db is None:
-        target = resolve_target(os.environ.get("MONGO_TARGET", "dev"))
-        _db = MongoClient(target.uri, serverSelectionTimeoutMS=8000)[target.db_name]
-    return _db
+    return cached_database(os.environ.get("MONGO_TARGET", "dev"))
 
 
 def _response(status: int, body: dict) -> dict:

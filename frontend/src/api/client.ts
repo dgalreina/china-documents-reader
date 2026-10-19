@@ -34,6 +34,8 @@ export interface ApiClient {
   ask(slug: string | null, question: string): Promise<ChatMessage>;
   /** Traduce una página al español (la primera vez tarda unos segundos; después sale de la caché). Rechaza con un mensaje en español. */
   getTranslation(slug: string, page: number): Promise<PageTranslation>;
+  /** Borra el libro y TODO lo que es solo suyo (PDF, portada, traducciones, hitos, personajes, análisis). Rechaza con un mensaje en español, p. ej. si aún se está analizando. */
+  deleteBook(slug: string): Promise<void>;
   /** Avisa cuando cambian libros o trabajos (progreso, cola...). Devuelve la función para dejar de escuchar. */
   subscribe(listener: () => void): () => void;
 }

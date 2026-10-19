@@ -231,6 +231,18 @@ export class MockApi implements ApiClient {
     if (next) this.run(next);
   }
 
+  deleteBook(slug: string): Promise<void> {
+    const running = this.jobs.find((job) => job.slug === slug && (job.status === 'RUNNING' || job.status === 'UPLOADING'));
+    if (running) return Promise.reject(new Error('El libro se está analizando o subiendo. Espera a que termine para borrarlo.'));
+    if (!this.books.some((book) => book.slug === slug)) return Promise.reject(new Error('No existe ese libro.'));
+    this.books = this.books.filter((book) => book.slug !== slug);
+    this.jobs = this.jobs.filter((job) => job.slug !== slug);
+    this.hitos.delete(slug);
+    this.personajes.delete(slug);
+    this.emit();
+    return Promise.resolve();
+  }
+
   getPdfUrl(slug: string): Promise<string> {
     if (!this.books.some((book) => book.slug === slug)) return Promise.reject(new Error('No existe ese libro.'));
     return Promise.resolve(`/samples/${slug}.pdf`);

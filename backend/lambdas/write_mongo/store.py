@@ -29,6 +29,18 @@ DEFAULT_DB = {"dev": "china_documents_dev", "prod": "china-history"}
 REQUIRED_FIELDS = ("text", "embedding", "chunkIndex", "añoInicio", "añoFin", "embeddingModel")
 
 
+_databases: dict = {}
+
+
+def cached_database(target_name: str):
+    """La base de datos del destino, con el cliente de Mongo REUTILIZADO entre peticiones de una Lambda "caliente" (conectar cuesta ~1 s).
+    Para las Lambdas de la web (leer y borrar); las de escritura del flujo abren y cierran su propia conexión."""
+    if target_name not in _databases:
+        target = resolve_target(target_name)
+        _databases[target_name] = MongoClient(target.uri, serverSelectionTimeoutMS=8000)[target.db_name]
+    return _databases[target_name]
+
+
 class ContractError(Exception):
     """Un documento no cumple el contrato con china-history."""
 

@@ -205,6 +205,13 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   `store_book` la copia a `books/<slug>/cover.jpg` (y borra la vieja si el reproceso no trae) y marca `hasCover` en el catalogo; `books` y `jobs` devuelven `coverUrl` (URL firmada;
   `jobs` solo para los RUNNING). Web: `Cover` en Archivos y Progreso, con recambio 書. Libros ya subidos: `python -m lambdas.store_book.backfill_covers --table <BooksTableName>
   --bucket <BooksBucketName> [--write]` (por defecto solo muestra). Ojo: `pypdfium2` para Linux NO se ha podido probar hasta el primer despliegue (paquete de Lambdas 74 MB).
+  **Borrar libros (hecho, sin desplegar):** `DELETE /books/{slug}` (Lambda `delete_book`, la de permisos mas amplios) borra Mongo (chunks y hitos con `origen` propio; personajes
+  solo si ningun otro libro los usa, si no se les quita la fuente), S3 (`books/<slug>/`, `translations/<slug>/`, `jobs/<id>/` y `uploads/<id>/` de sus trabajos), sus trabajos y,
+  el ULTIMO, el catalogo (si falla a medias el libro sigue en la lista y se reintenta). 409 mientras se analiza. Web: papelera en cada libro de Archivos + `ConfirmDialog` (portal en
+  `body`: el panel usa `translate` y encerraria un `fixed`). Restos de pruebas sin catalogo: `python -m lambdas.delete_book.cli <slug> [--write]` (solo Mongo dev; por defecto solo cuenta).
+  **Sin rebote** (`overflow-hidden overscroll-none` en html/body, como china-history) y panel con movimiento de 450 ms (Tailwind 4 anima `translate`, no `transform`).
+  **Siguiente (acordado, sin hacer):** analizar a peticion: al subir, una Lambda `ingest` guarda el PDF en `books/` (permanente), dibuja la portada y lo apunta como 'sin analizar'; boton
+  'Analizar' (con coste estimado ~0,01 USD/pagina) arranca el flujo; `analysis`: none/running/done/failed; reemplazar un PDF invalida lo derivado (misma rutina que borrar).
   **Identidad visual:** acento ROJO ZHOU `#8e1b1b` (seal-dark `#6c1212`, texto `#f6efe4`), el mismo del portfolio; el verde Shang es el de china-history. 'Listo'/'Analizando'
   van en neutro (tinta) para no confundirse con 'Error'. El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
 

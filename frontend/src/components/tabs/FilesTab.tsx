@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { MAX_PDF_MB, isValidSlug, suggestSlug, suggestTitle, validatePdf } from '../../lib/files';
 import type { Book, JobStatus } from '../../types';
+import { ConfirmDialog } from '../ConfirmDialog';
 import { Cover } from '../Cover';
+import { TrashIcon } from '../icons';
 
 const STATUS_LABEL: Record<JobStatus, string> = {
   UPLOADING: 'Subiendo',
@@ -28,10 +30,33 @@ interface FilesTabProps {
   onUpload: (file: File, options: { slug: string; title: string; replaceSource: boolean }) => Promise<void>;
   /** Cierra la sesión. */
   onSignOut?: () => void;
+  /** Borra un libro con todo lo suyo. Rechaza con un mensaje en español. */
+  onDelete?: (slug: string) => Promise<void>;
 }
 
-export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut }: FilesTabProps) {
+export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut, onDelete }: FilesTabProps) {
   const [formOpen, setFormOpen] = useState(false);
+  const [pending, setPending] = useState<Book | null>(null); // el libro que se está a punto de borrar
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const closeDialog = () => {
+    setPending(null);
+    setDeleteError(null);
+  };
+  const confirmDelete = async () => {
+    if (!pending || !onDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(pending.slug);
+      setPending(null);
+    } catch (problem) {
+      setDeleteError(problem instanceof Error ? problem.message : 'No se pudo borrar el libro.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="p-3">
@@ -58,7 +83,7 @@ export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut }: 
       ) : (
         <ul className="space-y-2">
           {books.map((book) => (
-            <li key={book.slug}>
+            <li key={book.slug} className="relative">
               <button
                 onClick={() => onSelect(book.slug)}
                 aria-current={book.slug === currentSlug ? 'true' : undefined}
@@ -78,9 +103,32 @@ export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut }: 
                   </div>
                 </div>
               </button>
+              {onDelete && (
+                <button
+                  onClick={() => setPending(book)}
+                  aria-label={`Borrar «${book.title}»`}
+                  title="Borrar el libro"
+                  className="absolute bottom-1.5 right-1.5 rounded-md p-1.5 text-stone-light hover:bg-paper-dark hover:text-seal-dark"
+                >
+                  <TrashIcon />
+                </button>
+              )}
             </li>
           ))}
         </ul>
+      )}
+
+      {pending && (
+        <ConfirmDialog title={`¿Borrar «${pending.title}»?`} confirmLabel="Borrar libro" busy={deleting} error={deleteError} onConfirm={confirmDelete} onCancel={closeDialog}>
+          <p>Se borrará para siempre todo lo que es solo de este libro:</p>
+          <ul className="list-disc space-y-0.5 pl-5">
+            <li>el PDF y su portada,</li>
+            <li>las traducciones,</li>
+            <li>sus hitos y los personajes que solo aparecen en él,</li>
+            <li>los datos de su análisis.</li>
+          </ul>
+          <p className="font-semibold text-ink">No se puede deshacer.</p>
+        </ConfirmDialog>
       )}
 
       {onSignOut && (

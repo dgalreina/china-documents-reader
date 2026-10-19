@@ -60,7 +60,7 @@ const Message = ({ children }: { children: React.ReactNode }) => <div className=
 function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { api: client, books, jobs, loaded, error, reload, upload } = useLibrary();
+  const { api: client, books, jobs, loaded, error, reload, upload, remove } = useLibrary();
   const book = books.find((candidate) => candidate.slug === slug);
   const pendingJob = !book && slug ? jobs.find((job) => job.slug === slug) : undefined;
 
@@ -198,6 +198,10 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
                 currentSlug={book?.slug}
                 onSelect={select}
                 onSignOut={onSignOut}
+                onDelete={async (deleted) => {
+                  await remove(deleted);
+                  if (deleted === slug) navigate('/'); // el libro abierto ya no existe: al inicio, que abre el más reciente o la pantalla vacía
+                }}
                 onUpload={async (file, options) => {
                   await upload(file, options);
                   setTab('progreso'); // nada más subir, lo que interesa es ver cómo avanza

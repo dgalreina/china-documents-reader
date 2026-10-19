@@ -278,3 +278,40 @@ describe('avisos de cambios', () => {
     expect(listener).not.toHaveBeenCalled(); // dado de baja
   });
 });
+
+describe('borrar un libro', () => {
+  it('pide el borrado con el método DELETE y el token, y avisa a la interfaz de que la lista cambió', async () => {
+    const server = fakeServer({ 'DELETE /books/mi-libro': () => ({ body: { deleted: { trabajos: 1 } } }) });
+    const api = makeApi(server);
+    const listener = vi.fn();
+    api.subscribe(listener);
+    await api.deleteBook('mi-libro');
+    expect(server.calls[0]).toMatchObject({ method: 'DELETE', url: 'https://api.test/books/mi-libro' });
+    expect(server.calls[0].headers.authorization).toBe('Bearer tok-123');
+    expect(server.calls[0].body).toBeUndefined();
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it('si el libro se está analizando, el mensaje del servidor llega tal cual para enseñarlo en el diálogo', async () => {
+    const server = fakeServer({ 'DELETE /books/mi-libro': () => ({ status: 409, body: { error: 'El libro se está analizando o subiendo. Espera a que termine para borrarlo.' } }) });
+    await expect(makeApi(server).deleteBook('mi-libro')).rejects.toThrow(/se está analizando/);
+  });
+
+  it('tras borrar, la URL del PDF guardada se olvida (no se firmaría un libro que ya no existe)', async () => {
+    const server = fakeServer({
+      'GET /books/mi-libro/pdf-url': () => ({ body: { url: 'https://s3/firma', expiresInSeconds: 3600 } }),
+      'DELETE /books/mi-libro': () => ({ body: {} }),
+    });
+    const api = makeApi(server);
+    await api.getPdfUrl('mi-libro');
+    await api.deleteBook('mi-libro');
+    await api.getPdfUrl('mi-libro');
+    expect(server.calls.filter((call) => call.url.endsWith('/pdf-url'))).toHaveLength(2); // se volvió a pedir: no salió de la caché
+  });
+
+  it('un identificador raro se codifica y no cambia la ruta', async () => {
+    const server = fakeServer({});
+    await makeApi(server).deleteBook('../otro').catch(() => undefined);
+    expect(server.calls[0].url).toBe('https://api.test/books/..%2Fotro');
+  });
+});

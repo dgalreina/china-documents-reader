@@ -301,6 +301,12 @@ export class HttpApi implements ApiClient {
     return this.request<PageTranslation>(`/books/${encodeURIComponent(slug)}/pages/${page}/translation`);
   }
 
+  async deleteBook(slug: string): Promise<void> {
+    await this.request(`/books/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    this.pdfUrls.delete(slug);
+    this.notify(); // la lista se refresca sin el libro
+  }
+
   async ask(): Promise<ChatMessage> {
     throw new ApiError('El agente todavía no está disponible.');
   }

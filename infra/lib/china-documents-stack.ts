@@ -175,6 +175,8 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const booksApi = fn('BooksFn', 'lambdas.books.handler.handler', 15, 256);
     // Lee los hitos y personajes de un libro de Mongo (solo lectura). 20 s: conectar a Atlas en frío puede tardar un par de segundos.
     const readHitos = fn('ReadHitosFn', 'lambdas.read_hitos.handler.handler', 20, 512);
+    // Borra un libro y TODO lo que es solo suyo (Mongo, S3, trabajos y catálogo). Los permisos más amplios de la app: va detrás del login y del límite de peticiones.
+    const deleteBook = fn('DeleteBookFn', 'lambdas.delete_book.handler.handler', 60, 512);
     const translate = fn('TranslatePageFn', 'lambdas.translate_page.handler.handler', 29, 512);
 
     // Permisos mínimos para cada una.
@@ -187,6 +189,10 @@ export class ChinaDocumentsStack extends cdk.Stack {
     booksBucket.grantReadWrite(storeBook); // ...lo copia al bucket permanente y borra las traducciones viejas del libro
     booksBucket.grantReadWrite(translate); // lee el PDF y lee/escribe la caché de traducciones
     booksTable.grantWriteData(storeBook); // apunta el libro en el catálogo al terminar
+    booksTable.grantReadWriteData(deleteBook); // lee y borra la entrada del catálogo
+    jobs.grantReadWriteData(deleteBook); // busca y borra los trabajos del libro
+    booksBucket.grantReadWrite(deleteBook); // borra el PDF, la portada y las traducciones
+    dataBucket.grantReadWrite(deleteBook); // borra lo intermedio de sus análisis y la subida original
     booksTable.grantReadData(booksApi); // lista los libros y comprueba que existan antes de firmar...
     booksBucket.grantRead(booksApi); // ...la URL de lectura de su PDF
     for (const f of [embedBatch, extractHitos]) geodataBucket.grantRead(f); // geocodifican con CHGIS y las listas de china-history
@@ -194,7 +200,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       actions: ['ssm:GetParameter'],
       resources: [cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: `${ssmPrefix.replace(/^\//, '')}/*`, arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME }, this)],
     });
-    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos: la URI de Mongo
+    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos y deleteBook: la URI de Mongo
 
     // ------------------------------------------------------------------------------------------------- Step Functions
     const jobKey = { jobId: tasks.DynamoAttributeValue.fromString(sfn.JsonPath.stringAt('$.jobId')) };
@@ -433,7 +439,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       defaultAuthorizer: jwt,
       corsPreflight: {
         allowOrigins: origins,
-        allowMethods: [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.OPTIONS],
+        allowMethods: [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.DELETE, apigw.CorsHttpMethod.OPTIONS],
         allowHeaders: ['authorization', 'content-type'],
         maxAge: cdk.Duration.days(1),
       },
@@ -442,6 +448,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     api.addRoutes({ path: '/jobs', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobListIntegration', jobStatus) });
     api.addRoutes({ path: '/books', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookListIntegration', booksApi) });
     api.addRoutes({ path: '/books/{slug}/pdf-url', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPdfIntegration', booksApi) });
+    api.addRoutes({ path: '/books/{slug}', methods: [apigw.HttpMethod.DELETE], integration: new integrations.HttpLambdaIntegration('BookDeleteIntegration', deleteBook) });
     api.addRoutes({ path: '/books/{slug}/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookHitosIntegration', readHitos) });
     api.addRoutes({ path: '/books/{slug}/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPersonajesIntegration', readHitos) });
     api.addRoutes({ path: '/jobs/{jobId}', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobStatusIntegration', jobStatus) });

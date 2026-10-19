@@ -182,3 +182,21 @@ describe('subscribe', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 });
+
+describe('borrar', () => {
+  it('quita el libro, sus trabajos y sus datos, y avisa a la interfaz', async () => {
+    const listener = vi.fn();
+    api.subscribe(listener);
+    await api.deleteBook(SAMPLE_SLUG);
+    expect((await api.listBooks()).map((b) => b.slug)).not.toContain(SAMPLE_SLUG);
+    expect((await api.listJobs()).some((j) => j.slug === SAMPLE_SLUG)).toBe(false);
+    expect(await api.getHitos(SAMPLE_SLUG)).toEqual([]);
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it('no deja borrar mientras se sube o se analiza, ni un libro que no existe', async () => {
+    await api.startUpload(pdf(), options());
+    await expect(api.deleteBook('libro-nuevo')).rejects.toThrow(/se está analizando/);
+    await expect(api.deleteBook('fantasma')).rejects.toThrow(/No existe/);
+  });
+});
