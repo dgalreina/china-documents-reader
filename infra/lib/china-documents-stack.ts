@@ -181,6 +181,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     dataBucket.grantPut(presign); // firma subidas: necesita poder escribir en esa clave
     jobs.grantWriteData(presign);
     jobs.grantReadData(jobStatus);
+    dataBucket.grantRead(jobStatus); // la portada de un análisis en marcha (jobs/<id>/cover.jpg): comprueba que existe y firma su URL
     for (const f of [extractChunk, embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos]) dataBucket.grantReadWrite(f);
     dataBucket.grantRead(storeBook); // lee el PDF subido...
     booksBucket.grantReadWrite(storeBook); // ...lo copia al bucket permanente y borra las traducciones viejas del libro

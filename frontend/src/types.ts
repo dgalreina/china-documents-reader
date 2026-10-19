@@ -21,6 +21,8 @@ export interface Book {
   status: JobStatus;
   createdAt: string;
   stats?: BookStats;
+  /** URL temporal de la portada (la primera página). Sin ella, la lista enseña un recambio. */
+  coverUrl?: string;
 }
 
 export interface Job {
@@ -40,6 +42,8 @@ export interface Job {
   queuePosition?: number;
   error?: string;
   stats?: BookStats;
+  /** Portada del libro, si ya se ha dibujado (el primer paso del análisis la deja enseguida). */
+  coverUrl?: string;
   createdAt: string;
   finishedAt?: string;
 }

@@ -2,3 +2,5 @@ pypdf>=5.0
 openai>=1.60
 python-dotenv>=1.0
 pymongo>=4.8
+pypdfium2>=4.30  # dibuja la primera página del PDF como portada
+pillow>=10.0  # guarda esa imagen como JPEG

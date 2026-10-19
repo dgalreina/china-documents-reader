@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MAX_PDF_MB, isValidSlug, suggestSlug, suggestTitle, validatePdf } from '../../lib/files';
 import type { Book, JobStatus } from '../../types';
+import { Cover } from '../Cover';
 
 const STATUS_LABEL: Record<JobStatus, string> = {
   UPLOADING: 'Subiendo',
@@ -61,17 +62,20 @@ export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut }: 
               <button
                 onClick={() => onSelect(book.slug)}
                 aria-current={book.slug === currentSlug ? 'true' : undefined}
-                className={`w-full rounded border p-3 text-left ${
+                className={`flex w-full gap-3 rounded border p-3 text-left ${
                   book.slug === currentSlug ? 'border-seal bg-white' : 'border-line bg-white/50 hover:bg-white'
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-sm font-semibold">{book.title}</span>
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[book.status]}`}>{STATUS_LABEL[book.status]}</span>
-                </div>
-                <div className="mt-1 text-xs text-stone">
-                  {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin datos de páginas'}
-                  {book.stats && book.stats.hitos > 0 ? ` · ${book.stats.hitos} hitos · ${book.stats.personajes} personajes` : ''}
+                <Cover url={book.coverUrl} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm font-semibold">{book.title}</span>
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[book.status]}`}>{STATUS_LABEL[book.status]}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-stone">
+                    {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin datos de páginas'}
+                    {book.stats && book.stats.hitos > 0 ? ` · ${book.stats.hitos} hitos · ${book.stats.personajes} personajes` : ''}
+                  </div>
                 </div>
               </button>
             </li>

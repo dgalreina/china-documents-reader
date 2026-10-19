@@ -30,6 +30,7 @@ interface ServerBook {
   pageCount?: number;
   createdAt?: string;
   stats?: ServerStats;
+  coverUrl?: string | null;
 }
 
 interface ServerJob {
@@ -41,6 +42,7 @@ interface ServerJob {
   createdAt?: string;
   finishedAt?: string;
   error?: string;
+  coverUrl?: string | null;
   /** El resumen que escribe Finalize al terminar (ver backend/lambdas/write_mongo/handler.py). */
   summary?: {
     chunks?: number;
@@ -108,6 +110,7 @@ export function mapBook(book: ServerBook): Book {
     pageCount: num(book.pageCount),
     status: 'DONE', // el catálogo solo contiene libros terminados
     createdAt: book.createdAt ?? '',
+    coverUrl: book.coverUrl || undefined,
     stats: stats && {
       chunks: num(stats.chunks),
       chunksListos: num(stats.chunksListos),
@@ -191,6 +194,7 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
     progress,
     error,
     stats: summaryStats(job.summary),
+    coverUrl: job.coverUrl || undefined,
     createdAt: job.createdAt ?? '',
     finishedAt: job.finishedAt,
   };

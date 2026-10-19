@@ -45,6 +45,14 @@ describe('conversiones', () => {
     expect(mapBook({ slug: 'sin-titulo' }).title).toBe('sin-titulo');
   });
 
+  it('la portada llega como URL; vacía o null es "sin portada" (la lista enseña el recambio)', () => {
+    expect(mapBook({ slug: 'a', coverUrl: 'https://s3/portada?firma' }).coverUrl).toBe('https://s3/portada?firma');
+    expect(mapBook({ slug: 'a', coverUrl: null }).coverUrl).toBeUndefined();
+    expect(mapBook({ slug: 'a' }).coverUrl).toBeUndefined();
+    expect(mapJob({ jobId: 'j', status: 'RUNNING', source: 'a', coverUrl: 'https://s3/p' }, NOW).coverUrl).toBe('https://s3/p');
+    expect(mapJob({ jobId: 'j', status: 'RUNNING', source: 'a', coverUrl: '' }, NOW).coverUrl).toBeUndefined();
+  });
+
   it('un trabajo terminado trae sus estadísticas del resumen (personajes = cuántos nombres)', () => {
     const job = mapJob(
       { jobId: 'j', status: 'DONE', source: 'a', summary: { chunks: 58, chunksListos: 42, hitosEscritos: 2, personajes: { 'Rey Wu': 1, 'Rey Cheng': 2 }, costeEstimadoUsd: 0.1971 } },

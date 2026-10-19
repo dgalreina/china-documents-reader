@@ -16,6 +16,7 @@ from ..presign.signer import SOURCE_PATTERN
 
 PDF_URL_SECONDS = 6 * 3600  # pdf.js pide trozos del PDF mientras lees: la URL debe durar lo que una sesión de lectura
 PUBLIC_FIELDS = ("slug", "title", "filename", "pageCount", "status", "jobId", "createdAt", "updatedAt", "stats")
+COVER_URL_SECONDS = 6 * 3600  # como la del PDF: dura lo que una sesión
 HEADERS = {"Content-Type": "application/json"}
 
 
@@ -43,8 +44,8 @@ def _s3_client():
     return boto3.client("s3", config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}))
 
 
-def _list_books(table) -> dict:
-    """La tabla es pequeña (un registro por libro): basta con recorrerla entera."""
+def _list_books(table, s3_client) -> dict:
+    """La tabla es pequeña (un registro por libro): basta con recorrerla entera. Cada libro con portada lleva su URL firmada de lectura."""
     items, kwargs = [], {}
     while True:
         page = table.scan(**kwargs)
@@ -53,7 +54,17 @@ def _list_books(table) -> dict:
             break
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
     items.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
-    return _response(200, {"books": [{key: item[key] for key in PUBLIC_FIELDS if key in item} for item in items]})
+    books = []
+    for item in items:
+        book = {key: item[key] for key in PUBLIC_FIELDS if key in item}
+        if item.get("hasCover"):
+            book["coverUrl"] = s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": os.environ["BOOKS_BUCKET"], "Key": f"books/{item['slug']}/cover.jpg", "ResponseContentType": "image/jpeg"},
+                ExpiresIn=COVER_URL_SECONDS,
+            )
+        books.append(book)
+    return _response(200, {"books": books})
 
 
 def _pdf_url(slug: str, table, s3_client) -> dict:
@@ -72,7 +83,7 @@ def _pdf_url(slug: str, table, s3_client) -> dict:
 def handler(event: dict, _context=None, books_table=None, s3_client=None) -> dict:
     route = event.get("routeKey", "")
     if route == "GET /books":
-        return _list_books(books_table or _books_table())
+        return _list_books(books_table or _books_table(), s3_client or _s3_client())
     if route == "GET /books/{slug}/pdf-url":
         slug = (event.get("pathParameters") or {}).get("slug", "")
         return _pdf_url(slug, books_table or _books_table(), s3_client or _s3_client())

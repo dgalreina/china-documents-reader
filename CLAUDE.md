@@ -201,7 +201,10 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   tambien lleva ahora `paragraphPages`). Lambda `read_hitos` (`GET /books/{slug}/hitos` y `/personajes`, solo lectura, filtra por `origen` y por libro, tope 500)
   y pestañas Hitos/Personajes con datos reales. Los hitos ya guardados antes (`oxford-test`, `oxford-prueba`) NO tienen pagina hasta reprocesar el libro.
   **Estilo (v2):** cabecera translucida que FLOTA sobre el visor (solo el titulo; HEADER_HEIGHT en lib/layout.ts), pildora Original/Español + pagina arriba a la derecha, panel cerrado
-  por defecto con una lengueta en el borde derecho (en PC EMPUJA al PDF, en movil se superpone), pestañas del panel arriba con icono y texto debajo. Pendiente: portadas (1a pagina del PDF).
+  por defecto con una lengueta en el borde derecho (en PC EMPUJA al PDF, en movil se superpone), pestañas del panel arriba con icono y texto debajo. **Portadas (hecho, sin desplegar):** `extract_chunk` dibuja la 1a pagina con `pypdfium2`+Pillow (JPEG 360 px, ~30 KB; opcional: si falla, el analisis sigue) en `jobs/<id>/cover.jpg`;
+  `store_book` la copia a `books/<slug>/cover.jpg` (y borra la vieja si el reproceso no trae) y marca `hasCover` en el catalogo; `books` y `jobs` devuelven `coverUrl` (URL firmada;
+  `jobs` solo para los RUNNING). Web: `Cover` en Archivos y Progreso, con recambio 書. Libros ya subidos: `python -m lambdas.store_book.backfill_covers --table <BooksTableName>
+  --bucket <BooksBucketName> [--write]` (por defecto solo muestra). Ojo: `pypdfium2` para Linux NO se ha podido probar hasta el primer despliegue (paquete de Lambdas 74 MB).
   **Identidad visual:** acento ROJO ZHOU `#8e1b1b` (seal-dark `#6c1212`, texto `#f6efe4`), el mismo del portfolio; el verde Shang es el de china-history. 'Listo'/'Analizando'
   van en neutro (tinta) para no confundirse con 'Error'. El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
 

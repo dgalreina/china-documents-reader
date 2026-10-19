@@ -1,5 +1,6 @@
 import { formatPercent, formatUsd } from '../../lib/format';
 import type { Book, Job } from '../../types';
+import { Cover } from '../Cover';
 
 interface ProgressTabProps {
   jobs: Job[];
@@ -13,6 +14,8 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
   const active = jobs.filter((job) => ACTIVE.has(job.status));
   const finished = jobs.filter((job) => !ACTIVE.has(job.status));
   const titleOf = (job: Job) => job.title ?? books.find((book) => book.slug === job.slug)?.title ?? job.slug;
+  // La portada del análisis (ya dibujada desde el primer paso) o, si terminó, la del libro del catálogo.
+  const coverOf = (job: Job) => job.coverUrl ?? books.find((book) => book.slug === job.slug)?.coverUrl;
 
   if (jobs.length === 0) return <p className="p-6 text-center text-sm text-stone">No hay análisis en marcha. Sube un PDF desde la pestaña Archivos.</p>;
 
@@ -23,7 +26,7 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone">En marcha</h3>
           <ul className="space-y-2">
             {active.map((job) => (
-              <JobCard key={job.jobId} job={job} title={titleOf(job)} onSelect={onSelect} />
+              <JobCard key={job.jobId} job={job} title={titleOf(job)} coverUrl={coverOf(job)} onSelect={onSelect} />
             ))}
           </ul>
         </section>
@@ -33,7 +36,7 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone">Terminados</h3>
           <ul className="space-y-2">
             {finished.map((job) => (
-              <JobCard key={job.jobId} job={job} title={titleOf(job)} onSelect={onSelect} />
+              <JobCard key={job.jobId} job={job} title={titleOf(job)} coverUrl={coverOf(job)} onSelect={onSelect} />
             ))}
           </ul>
         </section>
@@ -42,10 +45,12 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
   );
 }
 
-function JobCard({ job, title, onSelect }: { job: Job; title: string; onSelect: (slug: string) => void }) {
+function JobCard({ job, title, coverUrl, onSelect }: { job: Job; title: string; coverUrl?: string; onSelect: (slug: string) => void }) {
   const running = job.status === 'UPLOADING' || job.status === 'RUNNING';
   return (
-    <li className="rounded border border-line bg-white p-3 text-sm">
+    <li className="flex gap-3 rounded border border-line bg-white p-3 text-sm">
+      <Cover url={coverUrl} />
+      <div className="min-w-0 flex-1">
       <button onClick={() => onSelect(job.slug)} className="block w-full text-left font-semibold hover:text-seal">
         {title}
       </button>
@@ -91,6 +96,7 @@ function JobCard({ job, title, onSelect }: { job: Job; title: string; onSelect: 
           {job.error}
         </p>
       )}
+      </div>
     </li>
   );
 }
