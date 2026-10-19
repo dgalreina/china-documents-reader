@@ -1,6 +1,6 @@
 {
-  "name": "China Documents Reader",
-  "short_name": "Documentos",
+  "name": "Document Reader",
+  "short_name": "Document Reader",
   "description": "Lee libros de historia de China: visor de PDF, traducción al español, hitos y personajes.",
   "lang": "es",
   "start_url": "/",

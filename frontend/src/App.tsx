@@ -103,7 +103,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-line bg-paper px-4 py-2">
-        <h1 className="min-w-0 flex-1 truncate font-brush text-lg font-bold">{book ? book.title : 'China Documents Reader'}</h1>
+        <h1 className="min-w-0 flex-1 truncate font-brush text-lg font-bold">{book ? book.title : 'Document Reader'}</h1>
         {book && pdfUrl && (
           <div className="flex shrink-0 overflow-hidden rounded border border-line text-sm font-semibold" role="group" aria-label="Modo de lectura">
             {(['original', 'es'] as const).map((value) => (

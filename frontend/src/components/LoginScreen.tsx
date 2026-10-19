@@ -29,7 +29,7 @@ export function LoginScreen({ onSubmit }: LoginScreenProps) {
     <main className="flex h-full items-center justify-center overflow-y-auto p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded border border-line bg-white p-6 shadow-sm">
         <img src="/icon-192.png" alt="" width={56} height={56} className="rounded-xl shadow-sm" />
-        <h1 className="font-brush text-2xl font-bold">China Documents Reader</h1>
+        <h1 className="font-brush text-2xl font-bold">Document Reader</h1>
         <p className="text-sm text-stone">Entra para ver y subir tus libros.</p>
 
         <label className="block text-sm font-semibold">
