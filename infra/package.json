@@ -5,9 +5,10 @@
   "scripts": {
     "build": "tsc --noEmit",
     "build:lambda": "node scripts/build-lambda.mjs",
-    "synth": "npm run build:lambda && cdk synth --quiet",
-    "diff": "npm run build:lambda && cdk diff",
-    "deploy": "npm run build:lambda && cdk deploy"
+    "synth": "npm run build:lambda && npm run build:front && cdk synth --quiet",
+    "diff": "npm run build:lambda && npm run build:front && cdk diff",
+    "deploy": "npm run build:lambda && npm run build:front && cdk deploy",
+    "build:front": "node scripts/build-front.mjs"
   },
   "dependencies": {
     "aws-cdk-lib": "2.273.0",

@@ -7,7 +7,7 @@ import time
 import pytest
 
 from lambdas.presign.handler import handler
-from lambdas.presign.signer import InvalidUpload, create_upload, max_bytes, safe_filename
+from lambdas.presign.signer import InvalidUpload, create_upload, max_bytes, resolve_title, safe_filename
 
 
 class FakeTable:
@@ -145,3 +145,30 @@ def test_sin_slug_derivable_pide_indicarlo():
     table = FakeTable()
     response = handler(event({"filename": "中国历史.pdf"}), s3_client=FakeS3(), jobs_table=table)  # sin letras latinas
     assert response["statusCode"] == 400 and "source" in json.loads(response["body"])["error"]
+
+
+def test_el_titulo_se_deriva_del_nombre_del_archivo_si_no_se_indica():
+    assert resolve_title(None, "historia_de_china.pdf") == "Historia de china"
+    assert resolve_title(None, "C:\\libros\\El mundo chino.pdf") == "El mundo chino"
+
+
+def test_el_usuario_puede_poner_su_titulo_y_se_limpia_de_espacios():
+    assert resolve_title("  El   mundo \n chino ", "x.pdf") == "El mundo chino"
+
+
+@pytest.mark.parametrize("title", ["", "   ", 5, "x" * 121, "con\x00control"])
+def test_titulos_invalidos_se_rechazan(title):
+    with pytest.raises(InvalidUpload):
+        resolve_title(title, "x.pdf")
+
+
+def test_el_titulo_se_apunta_en_el_trabajo_y_se_devuelve():
+    table = FakeTable()
+    response = handler(event({"filename": "libro.pdf", "title": "Mi libro"}), s3_client=FakeS3(), jobs_table=table)
+    assert table.items[0]["title"] == "Mi libro" == json.loads(response["body"])["title"]
+
+
+def test_un_titulo_invalido_da_400_y_no_registra_nada():
+    table = FakeTable()
+    response = handler(event({"filename": "libro.pdf", "title": "x" * 500}), s3_client=FakeS3(), jobs_table=table)
+    assert response["statusCode"] == 400 and table.items == []

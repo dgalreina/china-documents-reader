@@ -1,4 +1,4 @@
-"""Punto de entrada de AWS Lambda detrás de API Gateway (HTTP API): POST /uploads  {"filename": "libro.pdf", "source"?, "replaceSource"?}
+"""Punto de entrada de AWS Lambda detrás de API Gateway (HTTP API): POST /uploads  {"filename": "libro.pdf", "source"?, "title"?, "replaceSource"?}
 
 Hace dos cosas: (1) firma un permiso temporal para subir el PDF a S3 y (2) APUNTA EL TRABAJO en DynamoDB (estado UPLOADING, nombre del
 libro, si es un reproceso). Cuando el PDF llegue a S3, Step Functions arranca solo y lee ese registro: así el `source` y el reemplazo
@@ -14,7 +14,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from .signer import InvalidUpload, create_upload, resolve_source
+from .signer import InvalidUpload, create_upload, resolve_source, resolve_title
 
 HEADERS = {"Content-Type": "application/json"}
 JOB_TTL_DAYS = 30  # DynamoDB borra el registro solo tras este tiempo (atributo expiresAt)
@@ -58,6 +58,7 @@ def handler(event: dict, _context=None, s3_client=None, jobs_table=None) -> dict
         data = _parse_body(event)
         filename = data.get("filename")
         source = resolve_source(data.get("source"), filename)
+        title = resolve_title(data.get("title"), filename)
         replace_source = data.get("replaceSource", False)
         if not isinstance(replace_source, bool):
             raise InvalidUpload("replaceSource debe ser true o false.")
@@ -70,11 +71,12 @@ def handler(event: dict, _context=None, s3_client=None, jobs_table=None) -> dict
                 "status": "UPLOADING",
                 "filename": filename,
                 "source": source,
+                "title": title,
                 "replaceSource": replace_source,
                 "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "expiresAt": int(time.time()) + JOB_TTL_DAYS * 86400,
             }
         )
-        return _response(200, {**upload, "source": source, "replaceSource": replace_source})
+        return _response(200, {**upload, "source": source, "title": title, "replaceSource": replace_source})
     except InvalidUpload as err:
         return _response(400, {"error": str(err)})

@@ -15,13 +15,15 @@ PDF subido a S3 ─► EventBridge ─► Step Functions ─► Lambdas (Python)
 | Recurso | Para qué |
 |---|---|
 | Bucket `DataBucket` | PDFs subidos (`uploads/`) y ficheros intermedios de cada trabajo (`jobs/<id>/`). Se borra solo a los 30 días. |
+| Web: `SiteBucket` + CloudFront | La web (`frontend/dist`) en un bucket privado y CloudFront delante: da la dirección pública `SiteUrl` (HTTPS, PC y móvil, sin dominio propio). Un despliegue con `cdk deploy` construye la web, la sube junto con un `config.json` (dirección de la API y datos de Cognito) y vacía la caché de CloudFront. Nunca lleva PDFs: `npm run build:front` borra `public/samples` y falla si queda alguno. |
 | Bucket `BooksBucket` | Los libros: el PDF original (`books/<libro>/original.pdf`) y las traducciones al español (`translations/<libro>/...`). **No caduca** y no se borra con el stack. |
 | Bucket `GeodataBucket` | Datos geográficos externos (CHGIS no se puede redistribuir). Privado y no se borra con el stack. |
+| Tabla `BooksTable` (DynamoDB) | El catálogo de libros ya procesados (título, páginas, estadísticas): permanente y no se borra con el stack. La escribe `store_book` al terminar el flujo y la lee la Lambda `books`. |
 | Tabla `JobsTable` (DynamoDB) | Estado de cada trabajo (UPLOADING, RUNNING, DONE, FAILED, NEEDS_OCR) y su resumen. Pago por uso; caduca a los 30 días. |
-| 11 Lambdas (Python 3.11) | `presign`, `jobs`, `extract_chunk`, periodo del libro, etiquetar+embeddings, hitos, 3 de escritura en Mongo, `store_book` (guarda el PDF de forma permanente al final del flujo) y `translate_page` (traduce una página al español, con caché). |
+| 12 Lambdas (Python 3.11) | `presign`, `jobs`, `books`, `extract_chunk`, periodo del libro, etiquetar+embeddings, hitos, 3 de escritura en Mongo, `store_book` (guarda el PDF de forma permanente y apunta el libro en el catálogo al final del flujo) y `translate_page` (traduce una página al español, con caché). |
 | Step Functions (Standard) | Reparte el libro en tandas de 100 chunks (hasta 5 a la vez), y escribe hitos y personajes **de uno en uno**. Se puede reanudar desde el paso fallido (*redrive*). |
 | Cognito | Un solo usuario, sin registro abierto. |
-| API Gateway (HTTP) | `POST /uploads`, `GET /jobs/{jobId}` y `GET /books/{slug}/pages/{page}/translation`, todas exigen un token de Cognito. Limitada a 2 peticiones/s (ráfaga de 5). La traducción solo recibe libro y página, nunca texto; su Lambda dura como mucho 29 s porque API Gateway corta a los 30. |
+| API Gateway (HTTP) | `POST /uploads`, `GET /jobs`, `GET /jobs/{jobId}`, `GET /books`, `GET /books/{slug}/pdf-url` (URL firmada de lectura del PDF, 6 h) y `GET /books/{slug}/pages/{page}/translation`; todas exigen un token de Cognito. Limitada a 2 peticiones/s (ráfaga de 5). La traducción solo recibe libro y página, nunca texto; su Lambda dura como mucho 29 s porque API Gateway corta a los 30. |
 
 El login en la web **no** protege la API por sí solo (cualquiera podría llamarla directamente): por eso la API valida el token.
 
@@ -66,8 +68,10 @@ npm run deploy          # crea los recursos en AWS
    aws cognito-idp admin-create-user --user-pool-id <UserPoolId> --username tu@correo --user-attributes Name=email,Value=tu@correo Name=email_verified,Value=true --message-action SUPPRESS
    aws cognito-idp admin-set-user-password --user-pool-id <UserPoolId> --username tu@correo --password '<contraseña>' --permanent
    ```
-3. **Frontend**: necesitará `ApiUrl`, `UserPoolId` y `UserPoolClientId`. Cuando tenga dirección propia (CloudFront), vuelve a
-   desplegar con `-c frontendOrigins=https://tu-dominio` para permitirla en CORS.
+3. **Frontend**: la web publicada lee `ApiUrl`, `UserPoolId` y `UserPoolClientId` de su `config.json` (lo sube el despliegue) y pide el login de Cognito;
+   la dirección de CloudFront (`SiteUrl`) ya se permite sola en el CORS. Para desarrollar en local contra el stack real: `node infra/scripts/write-front-config.mjs`
+   (escribe `frontend/public/config.json`, ignorado por git) y `cd frontend && npm run dev`. Si algún día hay dominio propio, se pasa con `-c frontendOrigins=https://tu-dominio`
+   (se suma a la de CloudFront) y se fijaría TLS 1.2 como mínimo: con el certificado por defecto de CloudFront no se puede.
 
 ## Probar una subida desde la terminal
 

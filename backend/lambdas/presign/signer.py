@@ -76,8 +76,26 @@ def resolve_source(source: object, filename: object) -> str:
     safe_filename(filename)  # valida que sea un nombre .pdf
     # Del nombre ORIGINAL, no del saneado: un nombre sin letras latinas queda como 'documento', un slug genérico donde dos libros
     # distintos chocarían (y un reemplazo borraría el otro). Mejor pedir el slug a mano.
-    base = re.split(r"[\/]", filename.strip())[-1][:-4]
+    base = re.split(r"[\\/]", filename.strip())[-1][:-4]
     derived = slugify(base)
     if not SOURCE_PATTERN.match(derived):
         raise InvalidUpload("No se pudo derivar un slug del nombre del archivo: indica 'source' a mano.")
     return derived
+
+
+MAX_TITLE_LENGTH = 120
+
+
+def resolve_title(title: object, filename: object) -> str:
+    """El título que se enseña en la lista de libros: el que escribe el usuario (validado) o, si no, uno legible sacado del nombre del archivo."""
+    if title is not None:
+        if not isinstance(title, str) or not title.strip():
+            raise InvalidUpload("title debe ser un texto no vacío.")
+        clean = " ".join(title.split())  # sin saltos de línea ni espacios repetidos
+        if len(clean) > MAX_TITLE_LENGTH or any(ord(char) < 32 for char in clean):
+            raise InvalidUpload(f"title no puede pasar de {MAX_TITLE_LENGTH} caracteres.")
+        return clean
+    safe_filename(filename)  # valida que sea un .pdf
+    base = re.split(r"[\\/]", str(filename).strip())[-1][:-4]
+    readable = " ".join(re.sub(r"[_]+", " ", base).split())[:MAX_TITLE_LENGTH]
+    return (readable[:1].upper() + readable[1:]) or "Documento"

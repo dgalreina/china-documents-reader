@@ -14,3 +14,6 @@ infra/dist/
 
 # caché local de la traducción de prueba
 .translate-cache/
+
+# configuración de la web para desarrollar contra el stack real (la escribe infra/scripts/write-front-config.mjs)
+frontend/public/config.json

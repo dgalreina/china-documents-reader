@@ -185,6 +185,18 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   El front (`ReaderView`, scroll continuo, inglés del PDF mientras llega el español, solo se pide la página a la vista ±1 tras 0,7 s) usa de
   momento la API simulada. **Pendiente:** URL firmada de lectura del PDF para el visor, catálogo de libros y API real en el front.
 
+- **Desplegado en AWS (eu-west-1, stack `ChinaDocumentsStack`) y probado de punta a punta:** subida de las 20 pags. del Oxford -> flujo OK en ~2 min,
+  ~0,20 USD, 42 chunks en dev (todos con años), hitos nuevos 2 (4 duplicados de pruebas anteriores descartados), PDF guardado en `BooksBucket`,
+  traduccion de una pagina OK. Script: `infra/scripts/smoke-test.mjs` (pide la contraseña sin mostrarla). Cognito: un usuario creado a mano. Parametros SSM
+  creados; Atlas con 0.0.0.0/0; datos geograficos subidos al bucket privado. **Hosting de la web en el CDK (S3 privado + CloudFront con OAC, SPA):**
+  desplegado (URL en la salida `SiteUrl`); NO lleva PDFs (`infra/scripts/build-front.mjs` los borra y falla si queda alguno).
+  **Rebanada 1 de datos reales (en curso, validada con tests y `cdk diff`, pendiente de desplegar):** el front ya no tiene datos de ejemplo (la API simulada vive solo
+  en `frontend/src/test/` para los tests). Login Cognito propio (`amazon-cognito-identity-js`, SRP; `global` definido en `vite.config.ts` o la web queda en blanco),
+  `config.json` en runtime (lo sube el despliegue; en local `node infra/scripts/write-front-config.mjs`). Backend nuevo: `BooksTable` (catalogo permanente, lo escribe
+  `store_book`), Lambda `books` (`GET /books`, `GET /books/{slug}/pdf-url`), `GET /jobs`, `title` en `presign`. El front solo enseña las pestañas con datos
+  reales (`api.features`): hoy Archivos y Progreso; Hitos/Personajes (rebanada 2: endpoint que lea Mongo y guardar la PAGINA real del hito, que hoy no se guarda)
+  y Agente (rebanada 4) siguen ocultas. Progreso sin fases ni cola todavia (rebanada 3). El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
+
 ## Ideas apuntadas (sin implementar)
 
 - **Tope de amplitud del rango de anios (HECHO):** un rango de mas de `MAX_SPAN_YEARS` (2000 por defecto, configurable por entorno) va a

@@ -52,3 +52,35 @@ def test_un_jobid_no_valido_da_400_y_no_consulta_la_tabla(job_id):
 def test_un_resumen_corrupto_no_rompe_la_respuesta():
     body = json.loads(call(JOB, FakeTable({"jobId": JOB, "status": "DONE", "summary": "{no es json"}))["body"])
     assert body["summary"] is None
+
+
+class ScanTable:
+    """Una tabla que devuelve sus registros en dos páginas, como DynamoDB cuando hay muchos."""
+
+    def __init__(self, items):
+        self.items, self.calls = items, 0
+
+    def scan(self, **kwargs):
+        self.calls += 1
+        if "ExclusiveStartKey" not in kwargs:
+            return {"Items": self.items[:1], "LastEvaluatedKey": {"jobId": "x"}}
+        return {"Items": self.items[1:]}
+
+
+def test_get_jobs_sin_id_lista_los_trabajos_recientes_el_mas_nuevo_primero():
+    items = [
+        {"jobId": "a" * 32, "status": "DONE", "source": "viejo", "title": "Viejo", "createdAt": "2026-01-01T00:00:00Z", "expiresAt": 1, "summary": json.dumps({"chunks": 3})},
+        {"jobId": "b" * 32, "status": "RUNNING", "source": "nuevo", "title": "Nuevo", "createdAt": "2026-06-01T00:00:00Z", "expiresAt": 2},
+    ]
+    table = ScanTable(items)
+    response = handler({}, jobs_table=table)  # sin pathParameters: es GET /jobs
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200 and table.calls == 2
+    assert [j["source"] for j in body["jobs"]] == ["nuevo", "viejo"]
+    assert body["jobs"][1]["summary"] == {"chunks": 3} and all("expiresAt" not in j for j in body["jobs"])
+
+
+def test_la_lista_se_acota_a_los_mas_recientes():
+    items = [{"jobId": f"{i:032d}", "status": "DONE", "source": f"l{i}", "createdAt": f"2026-01-{i + 1:02d}T00:00:00Z"} for i in range(31)]
+    body = json.loads(handler({}, jobs_table=ScanTable(items))["body"])
+    assert len(body["jobs"]) == 30

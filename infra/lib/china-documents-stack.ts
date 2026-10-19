@@ -4,6 +4,8 @@ import { Construct } from 'constructs';
 import * as apigw from 'aws-cdk-lib/aws-apigatewayv2';
 import * as authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as cloudfrontOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as events from 'aws-cdk-lib/aws-events';
@@ -12,6 +14,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 
@@ -35,6 +38,38 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const batchSize = props.batchSize ?? 100;
     const maxSpanYears = props.maxSpanYears ?? 2000;
 
+    // ------------------------------------------------------------------------------------------------------------ la web
+    // La web (frontend/dist) son ficheros estáticos: un bucket PRIVADO y CloudFront delante, que es lo único que puede leerlo (OAC) y da la
+    // dirección pública https://<algo>.cloudfront.net, válida desde el PC y el móvil. Se crea antes que lo demás porque su dirección hay que
+    // permitirla en el CORS de la API y de los buckets.
+    const siteBucket = new s3.Bucket(this, 'SiteBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // se reconstruye desde el repositorio: no hay nada irrecuperable aquí
+      autoDeleteObjects: true,
+    });
+    const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
+      defaultRootObject: 'index.html',
+      defaultBehavior: {
+        origin: cloudfrontOrigins.S3BucketOrigin.withOriginAccessControl(siteBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        compress: true,
+        responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS, // HSTS, nosniff, X-Frame-Options, referrer...
+      },
+      // Es una SPA (react-router): /libros/mi-libro no existe como fichero, así que se sirve index.html y el router decide.
+      errorResponses: [
+        { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: cdk.Duration.seconds(0) },
+        { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: cdk.Duration.seconds(0) },
+      ],
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100, // solo Europa y Norteamérica: más barato y de sobra para un proyecto personal
+      // Sin dominio propio CloudFront usa su certificado por defecto, cuya política TLS mínima no se puede cambiar. Con un dominio propio se fijaría TLS 1.2.
+      comment: 'china-documents-reader: web',
+    });
+    const siteUrl = `https://${distribution.distributionDomainName}`;
+    // Orígenes que pueden llamar a la API y subir/leer en S3: los de fuera (localhost para desarrollar) y la propia web desplegada.
+    const origins = [...props.frontendOrigins, siteUrl];
+
     // ---------------------------------------------------------------------------------------------------- almacenamiento
     // Los PDFs subidos y los ficheros intermedios de cada trabajo (jobs/<id>/...). Todo se borra solo a los 30 días.
     const dataBucket = new s3.Bucket(this, 'DataBucket', {
@@ -47,7 +82,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
         {
           // El navegador sube el PDF directo a S3 con una URL firmada (POST): S3 necesita permitir ese origen.
           allowedMethods: [s3.HttpMethods.POST],
-          allowedOrigins: props.frontendOrigins,
+          allowedOrigins: origins,
           allowedHeaders: ['*'],
           maxAge: 3000,
         },
@@ -65,9 +100,11 @@ export class ChinaDocumentsStack extends cdk.Stack {
       cors: [
         {
           // Para que el visor (pdf.js, en el navegador) pueda leer el PDF con una URL firmada de lectura.
-          allowedMethods: [s3.HttpMethods.GET],
-          allowedOrigins: props.frontendOrigins,
+          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          allowedOrigins: origins,
           allowedHeaders: ['*'],
+          // pdf.js lee el PDF por trozos (cabecera Range) y necesita VER estas cabeceras de la respuesta; sin exponerlas descarga el libro entero de golpe.
+          exposedHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length', 'ETag'],
           maxAge: 3000,
         },
       ],
@@ -90,6 +127,14 @@ export class ChinaDocumentsStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // El catálogo de libros: un registro por libro ya procesado, PERMANENTE (a diferencia de los trabajos, que caducan a los 30 días). Lo escribe
+    // `store_book` al final del flujo y lo lee `books`. Se conserva si se destruye el stack: es la lista de los libros del usuario.
+    const booksTable = new dynamodb.Table(this, 'BooksTable', {
+      partitionKey: { name: 'slug', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     // ------------------------------------------------------------------------------------------------------------ Lambdas
     // Un único paquete (infra/build/lambda, lo genera `npm run build:lambda`) para todas; cada función apunta a su handler.
     const code = lambda.Code.fromAsset(path.join(__dirname, '..', 'build', 'lambda'));
@@ -97,6 +142,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       SSM_PREFIX: ssmPrefix,
       GEODATA_BUCKET: geodataBucket.bucketName,
       JOBS_TABLE: jobs.tableName,
+      BOOKS_TABLE: booksTable.tableName,
       UPLOAD_BUCKET: dataBucket.bucketName,
       BOOKS_BUCKET: booksBucket.bucketName,
       MONGO_TARGET: props.mongoTarget, // dev o prod lo decide SOLO el despliegue, nunca el evento
@@ -126,6 +172,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const storeBook = fn('StoreBookFn', 'lambdas.store_book.handler.handler', 120, 256);
     // 29 s: API Gateway (HTTP API) corta cualquier integración a los 30 s, así que una Lambda más lenta no serviría de nada. Una página tarda ~5-8 s.
     // 512 MB de /tmp (el de por defecto) bastan: el PDF (hasta 100 MB) se baja ahí una vez y la Lambda "caliente" lo reutiliza.
+    const booksApi = fn('BooksFn', 'lambdas.books.handler.handler', 15, 256);
     const translate = fn('TranslatePageFn', 'lambdas.translate_page.handler.handler', 29, 512);
 
     // Permisos mínimos para cada una.
@@ -136,6 +183,9 @@ export class ChinaDocumentsStack extends cdk.Stack {
     dataBucket.grantRead(storeBook); // lee el PDF subido...
     booksBucket.grantReadWrite(storeBook); // ...lo copia al bucket permanente y borra las traducciones viejas del libro
     booksBucket.grantReadWrite(translate); // lee el PDF y lee/escribe la caché de traducciones
+    booksTable.grantWriteData(storeBook); // apunta el libro en el catálogo al terminar
+    booksTable.grantReadData(booksApi); // lista los libros y comprueba que existan antes de firmar...
+    booksBucket.grantRead(booksApi); // ...la URL de lectura de su PDF
     for (const f of [embedBatch, extractHitos]) geodataBucket.grantRead(f); // geocodifican con CHGIS y las listas de china-history
     const readSecrets = new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
@@ -298,7 +348,18 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const storeBookStep = invoke(
       'StoreBook',
       storeBook,
-      sfn.TaskInput.fromObject({ 'bucket.$': '$.bucket', 'key.$': '$.key', 'source.$': '$.job.Item.source.S' }),
+      sfn.TaskInput.fromObject({
+        'bucket.$': '$.bucket',
+        'key.$': '$.key',
+        'source.$': '$.job.Item.source.S',
+        // Lo que se apunta en el catálogo: lo que el usuario puso al subir, lo que midió extract_chunk y el resumen de Finalize.
+        'title.$': '$.job.Item.title.S',
+        'filename.$': '$.job.Item.filename.S',
+        'createdAt.$': '$.job.Item.createdAt.S',
+        'jobId.$': '$.jobId',
+        'pageCount.$': '$.extract.pageCount',
+        'summary.$': '$.summary',
+      }),
       sfn.JsonPath.DISCARD,
     );
 
@@ -368,13 +429,16 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const api = new apigw.HttpApi(this, 'Api', {
       defaultAuthorizer: jwt,
       corsPreflight: {
-        allowOrigins: props.frontendOrigins,
+        allowOrigins: origins,
         allowMethods: [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.OPTIONS],
         allowHeaders: ['authorization', 'content-type'],
         maxAge: cdk.Duration.days(1),
       },
     });
     api.addRoutes({ path: '/uploads', methods: [apigw.HttpMethod.POST], integration: new integrations.HttpLambdaIntegration('PresignIntegration', presign) });
+    api.addRoutes({ path: '/jobs', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobListIntegration', jobStatus) });
+    api.addRoutes({ path: '/books', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookListIntegration', booksApi) });
+    api.addRoutes({ path: '/books/{slug}/pdf-url', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPdfIntegration', booksApi) });
     api.addRoutes({ path: '/jobs/{jobId}', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobStatusIntegration', jobStatus) });
     // La traducción de una página: el navegador manda solo libro y página (nunca texto). Va detrás del mismo autorizador JWT que el resto (es el
     // defaultAuthorizer de la API) y bajo el mismo freno de peticiones.
@@ -387,11 +451,34 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const defaultStage = api.defaultStage?.node.defaultChild as apigw.CfnStage;
     defaultStage.defaultRouteSettings = { throttlingBurstLimit: 5, throttlingRateLimit: 2 };
 
+    // ------------------------------------------------------------------------------------------- publicar la web
+    // Sube frontend/dist (lo construye `npm run build:front`, que ya quita los PDFs de muestra) junto con config.json, que la web leerá para saber
+    // dónde está la API. Se excluye samples/ por duplicado: un PDF en este bucket quedaría descargable por cualquiera con el enlace.
+    new s3deploy.BucketDeployment(this, 'DeploySite', {
+      sources: [
+        s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend', 'dist'), { exclude: ['samples', 'samples/*', '*.pdf'] }),
+        s3deploy.Source.jsonData('config.json', {
+          region: this.region,
+          apiUrl: api.apiEndpoint,
+          userPoolId: userPool.userPoolId,
+          userPoolClientId: webClient.userPoolClientId,
+        }),
+      ],
+      destinationBucket: siteBucket,
+      exclude: ['samples/*'],
+      distribution,
+      distributionPaths: ['/*'], // al subir una versión nueva, CloudFront olvida la anterior
+      cacheControl: [s3deploy.CacheControl.noCache()], // siempre revalidar: la web es pequeña y así una versión nueva se ve al instante
+      prune: true,
+    });
+
     // ------------------------------------------------------------------------------------------------------ salidas
+    new cdk.CfnOutput(this, 'SiteUrl', { value: siteUrl, description: 'La web: ábrela desde el PC o el móvil' });
     new cdk.CfnOutput(this, 'ApiUrl', { value: api.apiEndpoint });
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: webClient.userPoolClientId });
     new cdk.CfnOutput(this, 'DataBucketName', { value: dataBucket.bucketName });
+    new cdk.CfnOutput(this, 'BooksTableName', { value: booksTable.tableName });
     new cdk.CfnOutput(this, 'BooksBucketName', { value: booksBucket.bucketName });
     new cdk.CfnOutput(this, 'GeodataBucketName', { value: geodataBucket.bucketName });
     new cdk.CfnOutput(this, 'StateMachineArn', { value: stateMachine.stateMachineArn });
