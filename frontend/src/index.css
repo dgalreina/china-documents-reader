@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* Paleta de china-history (papel envejecido + tinta, con acento verde-sello imperial). Es provisional: el diseño visual se afina más adelante. */
+/* Paleta: papel envejecido + tinta, la misma base que china-history. El ACENTO es el rojo Zhou (el mismo que el del portfolio: #8e1b1b); el verde Shang es
+   el de china-history. Es provisional: el diseño visual se afina más adelante. */
 :root {
   --color-paper: #e9e7e2;
   --color-paper-dark: #d6d3cb;
@@ -8,8 +9,9 @@
   --color-ink-soft: #322f2b;
   --color-stone: #6b6862;
   --color-stone-light: #a5a29a;
-  --color-seal: #2c6e64;
-  --color-seal-dark: #1f5049;
+  --color-seal: #8e1b1b;
+  --color-seal-dark: #6c1212;
+  --color-on-seal: #f6efe4; /* texto sobre el rojo */
   --color-line: #cfcbc0;
 }
 
@@ -22,6 +24,7 @@
   --color-stone-light: var(--color-stone-light);
   --color-seal: var(--color-seal);
   --color-seal-dark: var(--color-seal-dark);
+  --color-on-seal: var(--color-on-seal);
   --color-line: var(--color-line);
 
   --font-sans: "Manrope", system-ui, sans-serif;

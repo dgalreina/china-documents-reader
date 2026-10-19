@@ -13,9 +13,11 @@ type Order = 'pagina' | 'año';
 export function HitosTab({ hitos, currentPage, onGoToPage }: HitosTabProps) {
   const [order, setOrder] = useState<Order>('pagina');
 
+  // Los hitos de libros procesados antes de guardar la página no la tienen: si ninguno la trae, "por página" se queda en por año.
+  const hasPages = hitos.some((hito) => hito.pagina !== undefined);
   const sorted = useMemo(
-    () => [...hitos].sort((a, b) => (order === 'año' ? a.año - b.año : (a.pagina ?? Infinity) - (b.pagina ?? Infinity) || a.año - b.año)),
-    [hitos, order],
+    () => [...hitos].sort((a, b) => (order === 'año' || !hasPages ? a.año - b.año : (a.pagina ?? Infinity) - (b.pagina ?? Infinity) || a.año - b.año)),
+    [hitos, order, hasPages],
   );
 
   if (hitos.length === 0) return <p className="p-6 text-center text-sm text-stone">Este libro aún no tiene hitos.</p>;
@@ -30,7 +32,7 @@ export function HitosTab({ hitos, currentPage, onGoToPage }: HitosTabProps) {
               key={value}
               onClick={() => setOrder(value)}
               aria-pressed={order === value}
-              className={`px-2 py-1 ${order === value ? 'bg-seal text-white' : 'bg-white text-stone hover:text-ink'}`}
+              className={`px-2 py-1 ${order === value ? 'bg-seal text-on-seal' : 'bg-white text-stone hover:text-ink'}`}
             >
               {value === 'pagina' ? 'Por página' : 'Por año'}
             </button>
@@ -45,7 +47,7 @@ export function HitosTab({ hitos, currentPage, onGoToPage }: HitosTabProps) {
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-sm font-semibold">{hito.titulo}</h3>
                 {hito.pagina !== undefined && (
-                  <button onClick={() => onGoToPage(hito.pagina!)} className="shrink-0 rounded bg-paper-dark px-2 py-0.5 text-xs font-semibold text-ink-soft hover:bg-seal hover:text-white">
+                  <button onClick={() => onGoToPage(hito.pagina!)} className="shrink-0 rounded bg-paper-dark px-2 py-0.5 text-xs font-semibold text-ink-soft hover:bg-seal hover:text-on-seal">
                     Pág. {hito.pagina}
                   </button>
                 )}

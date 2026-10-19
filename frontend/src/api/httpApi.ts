@@ -1,5 +1,5 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, ChatMessage, Hito, Job, JobStatus, PageTranslation, Personaje } from '../types';
+import type { Book, BookStats, ChatMessage, Hito, Job, JobStatus, PageTranslation, Personaje, PersonajeRef } from '../types';
 import type { ApiClient, ApiFeatures, UploadOptions } from './client';
 import { uploadToS3, type PresignedPost, type UploadFn } from './s3Upload';
 
@@ -51,6 +51,28 @@ interface ServerJob {
   } | null;
 }
 
+interface ServerHito {
+  id: string;
+  titulo?: string;
+  descripcion?: string;
+  año?: number;
+  lugar?: string;
+  pagina?: number | null;
+  personajes?: { id: string; nombre?: string; rol?: string }[];
+}
+
+interface ServerPersonaje {
+  id: string;
+  nombre?: string;
+  nombre_zh?: string | null;
+  rol?: string;
+  estado?: string | null;
+  descripcion?: string;
+  nacimiento?: number | null;
+  muerte?: number | null;
+  hitoIds?: string[];
+}
+
 /** Estado de una subida que ESTE navegador está haciendo (el servidor no sabe cuántos bytes han llegado). */
 interface LocalUpload {
   progress: number;
@@ -93,6 +115,36 @@ export function mapBook(book: ServerBook): Book {
       personajes: num(stats.personajes),
       costeEstimadoUsd: num(stats.costeEstimadoUsd),
     },
+  };
+}
+
+/** El servidor manda `null` en lo que no se sabe; la interfaz espera que falte (undefined). */
+const optional = <T>(value: T | null | undefined): T | undefined => (value === null || value === undefined || (typeof value === 'string' && value.trim() === '') ? undefined : value);
+
+export function mapHito(hito: ServerHito): Hito {
+  const pagina = typeof hito.pagina === 'number' && hito.pagina >= 1 ? hito.pagina : undefined;
+  return {
+    id: hito.id,
+    titulo: hito.titulo ?? '',
+    descripcion: hito.descripcion ?? '',
+    año: num(hito.año),
+    lugar: hito.lugar ?? '',
+    pagina,
+    personajes: (hito.personajes ?? []).map((person): PersonajeRef => ({ id: person.id, nombre: person.nombre ?? '', rol: person.rol ?? '' })),
+  };
+}
+
+export function mapPersonaje(person: ServerPersonaje): Personaje {
+  return {
+    id: person.id,
+    nombre: person.nombre ?? '',
+    nombreZh: optional(person.nombre_zh),
+    rol: person.rol ?? '',
+    estado: optional(person.estado),
+    descripcion: person.descripcion ?? '',
+    nacimiento: optional(person.nacimiento),
+    muerte: optional(person.muerte),
+    hitoIds: person.hitoIds ?? [],
   };
 }
 
@@ -160,11 +212,10 @@ export interface HttpApiOptions {
 
 /**
  * La API real: API Gateway con el token de Cognito en cada petición. Mientras haya trabajos en marcha avisa a la interfaz cada pocos segundos
- * (el backend aún no avisa por sí solo: se pregunta). Hitos, personajes y agente todavía no tienen endpoint: `features` lo dice y la interfaz
- * no enseña esas pestañas.
+ * (el backend aún no avisa por sí solo: se pregunta). El agente todavía no tiene endpoint: `features` lo dice y la interfaz no enseña su pestaña.
  */
 export class HttpApi implements ApiClient {
-  readonly features: ApiFeatures = { hitos: false, agent: false };
+  readonly features: ApiFeatures = { hitos: true, agent: false };
 
   private listeners = new Set<() => void>();
   private uploads = new Map<string, LocalUpload>();
@@ -224,12 +275,14 @@ export class HttpApi implements ApiClient {
     return mapped;
   }
 
-  async getHitos(): Promise<Hito[]> {
-    return [];
+  async getHitos(slug: string): Promise<Hito[]> {
+    const { hitos } = await this.request<{ hitos: ServerHito[] }>(`/books/${encodeURIComponent(slug)}/hitos`);
+    return hitos.map(mapHito);
   }
 
-  async getPersonajes(): Promise<Personaje[]> {
-    return [];
+  async getPersonajes(slug: string): Promise<Personaje[]> {
+    const { personajes } = await this.request<{ personajes: ServerPersonaje[] }>(`/books/${encodeURIComponent(slug)}/personajes`);
+    return personajes.map(mapPersonaje);
   }
 
   async getPdfUrl(slug: string): Promise<string> {

@@ -57,7 +57,7 @@ export function AgentTab({ api, slug, onGoToPage }: AgentTabProps) {
               onClick={() => setScope(value)}
               aria-pressed={askAll ? value === 'todos' : value === 'libro'}
               disabled={value === 'libro' && !slug}
-              className={`flex-1 px-2 py-1 ${(askAll ? value === 'todos' : value === 'libro') ? 'bg-seal text-white' : 'bg-white text-stone hover:text-ink'} disabled:opacity-40`}
+              className={`flex-1 px-2 py-1 ${(askAll ? value === 'todos' : value === 'libro') ? 'bg-seal text-on-seal' : 'bg-white text-stone hover:text-ink'} disabled:opacity-40`}
             >
               {value === 'libro' ? 'Este libro' : 'Todos los libros'}
             </button>
@@ -89,7 +89,7 @@ export function AgentTab({ api, slug, onGoToPage }: AgentTabProps) {
           aria-label="Pregunta"
           className="min-w-0 flex-1 rounded border border-line bg-white px-3 py-2 text-sm"
         />
-        <button disabled={!question.trim() || waiting} className="rounded bg-seal px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+        <button disabled={!question.trim() || waiting} className="rounded bg-seal px-4 py-2 text-sm font-semibold text-on-seal disabled:opacity-40">
           Enviar
         </button>
       </form>
@@ -99,7 +99,7 @@ export function AgentTab({ api, slug, onGoToPage }: AgentTabProps) {
 
 function Message({ message, onGoToPage }: { message: ChatMessage; onGoToPage: (page: number) => void }) {
   if (message.role === 'user') {
-    return <div className="ml-8 rounded bg-seal px-3 py-2 text-sm text-white">{message.text}</div>;
+    return <div className="ml-8 rounded bg-seal px-3 py-2 text-sm text-on-seal">{message.text}</div>;
   }
   return (
     <div className="mr-4 rounded border border-line bg-white p-3 text-sm">

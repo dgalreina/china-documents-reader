@@ -52,7 +52,7 @@ export function Drawer({ open, onClose, tab, onTab, badges = {}, tabs, panels }:
                 }`}
               >
                 {label}
-                {badges[id] ? <span className="ml-1 rounded-full bg-seal px-1.5 py-0.5 text-[10px] text-white">{badges[id]}</span> : null}
+                {badges[id] ? <span className="ml-1 rounded-full bg-seal px-1.5 py-0.5 text-[10px] text-on-seal">{badges[id]}</span> : null}
               </button>
             ))}
           </div>

@@ -111,7 +111,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
                 key={value}
                 onClick={() => changeMode(value)}
                 aria-pressed={mode === value}
-                className={`px-3 py-1.5 ${mode === value ? 'bg-seal text-white' : 'bg-white text-stone hover:text-ink'}`}
+                className={`px-3 py-1.5 ${mode === value ? 'bg-seal text-on-seal' : 'bg-white text-stone hover:text-ink'}`}
               >
                 {value === 'original' ? 'Original' : 'Español'}
               </button>

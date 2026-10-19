@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, HttpApi, mapBook, mapJob } from './httpApi';
+import { ApiError, HttpApi, mapBook, mapHito, mapJob } from './httpApi';
 import type { PresignedPost } from './s3Upload';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
@@ -136,11 +136,49 @@ describe('peticiones', () => {
     expect(server.calls[0].body).toBeUndefined();
   });
 
-  it('hitos, personajes y agente aún no existen: la interfaz lo sabe y no los enseña', async () => {
+  it('el agente aún no existe: la interfaz lo sabe y no enseña su pestaña', async () => {
     const api = makeApi(fakeServer({}));
-    expect(api.features).toEqual({ hitos: false, agent: false });
-    expect(await api.getHitos()).toEqual([]);
+    expect(api.features).toEqual({ hitos: true, agent: false });
     await expect(api.ask()).rejects.toThrow(/no está disponible/);
+  });
+});
+
+describe('hitos y personajes', () => {
+  it('los hitos del libro llegan convertidos: la página, si falta, queda sin definir, y los personajes llevan su nombre', async () => {
+    const server = fakeServer({
+      'GET /books/mi-libro/hitos': () => ({
+        body: {
+          hitos: [
+            { id: 'a', titulo: 'Batalla de Muye', descripcion: 'Algo.', año: -1046, lugar: 'Muye, Henan', pagina: 13, personajes: [{ id: 'p1', nombre: 'Rey Wu de Zhou', rol: 'líder' }] },
+            { id: 'b', titulo: 'Sin página', descripcion: 'Otro.', año: -770, lugar: 'Luoyi, Henan', personajes: [] },
+          ],
+        },
+      }),
+    });
+    const [con, sin] = await makeApi(server).getHitos('mi-libro');
+    expect(con).toEqual({ id: 'a', titulo: 'Batalla de Muye', descripcion: 'Algo.', año: -1046, lugar: 'Muye, Henan', pagina: 13, personajes: [{ id: 'p1', nombre: 'Rey Wu de Zhou', rol: 'líder' }] });
+    expect(sin.pagina).toBeUndefined();
+  });
+
+  it('una página inválida (0, null) no se enseña como botón', () => {
+    expect(mapHito({ id: 'a', pagina: 0 }).pagina).toBeUndefined();
+    expect(mapHito({ id: 'a', pagina: null }).pagina).toBeUndefined();
+    expect(mapHito({ id: 'a' })).toMatchObject({ titulo: '', año: 0, personajes: [] }); // un campo que falte no rompe la pantalla
+  });
+
+  it('los personajes convierten los null del servidor en "no se sabe" y conservan los hitos en que salen', async () => {
+    const server = fakeServer({
+      'GET /books/mi-libro/personajes': () => ({
+        body: { personajes: [{ id: 'p1', nombre: 'Rey Wu', nombre_zh: '周武王', rol: 'rey', estado: null, descripcion: 'Un rey.', nacimiento: null, muerte: -1043, hitoIds: ['a', 'b'] }] },
+      }),
+    });
+    const [person] = await makeApi(server).getPersonajes('mi-libro');
+    expect(person).toEqual({ id: 'p1', nombre: 'Rey Wu', nombreZh: '周武王', rol: 'rey', estado: undefined, descripcion: 'Un rey.', nacimiento: undefined, muerte: -1043, hitoIds: ['a', 'b'] });
+  });
+
+  it('un 502 del servidor llega como un mensaje que se puede enseñar', async () => {
+    const server = fakeServer({ 'GET /books/mi-libro/hitos': () => ({ status: 502, body: { error: 'No se pudieron leer los datos del libro. Inténtalo de nuevo.' } }) });
+    await expect(makeApi(server).getHitos('mi-libro')).rejects.toThrow(/No se pudieron leer/);
   });
 });
 

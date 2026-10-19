@@ -195,7 +195,13 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   `config.json` en runtime (lo sube el despliegue; en local `node infra/scripts/write-front-config.mjs`). Backend nuevo: `BooksTable` (catalogo permanente, lo escribe
   `store_book`), Lambda `books` (`GET /books`, `GET /books/{slug}/pdf-url`), `GET /jobs`, `title` en `presign`. El front solo enseña las pestañas con datos
   reales (`api.features`): hoy Archivos y Progreso; Hitos/Personajes (rebanada 2: endpoint que lea Mongo y guardar la PAGINA real del hito, que hoy no se guarda)
-  y Agente (rebanada 4) siguen ocultas. Progreso sin fases ni cola todavia (rebanada 3). El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
+  y Agente (rebanada 4) siguen ocultas. Progreso sin fases ni cola todavia (rebanada 3).
+  **Rebanada 2 (en curso, sin desplegar):** cada hito guarda `pagina` (la del parrafo que contiene su cita: el chunk recuerda `paragraphPages`; verificado en 6 de 6 hitos
+  del Oxford buscando la cita en el PDF) y `evidencia` (la frase del libro, max. 500). Campos extra opcionales: china-history los ignora (avisar a su agente; `book_chunks`
+  tambien lleva ahora `paragraphPages`). Lambda `read_hitos` (`GET /books/{slug}/hitos` y `/personajes`, solo lectura, filtra por `origen` y por libro, tope 500)
+  y pestañas Hitos/Personajes con datos reales. Los hitos ya guardados antes (`oxford-test`, `oxford-prueba`) NO tienen pagina hasta reprocesar el libro.
+  **Identidad visual:** acento ROJO ZHOU `#8e1b1b` (seal-dark `#6c1212`, texto `#f6efe4`), el mismo del portfolio; el verde Shang es el de china-history. 'Listo'/'Analizando'
+  van en neutro (tinta) para no confundirse con 'Error'. El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
 
 ## Ideas apuntadas (sin implementar)
 

@@ -14,8 +14,8 @@ const STATUS_LABEL: Record<JobStatus, string> = {
 const STATUS_STYLE: Record<JobStatus, string> = {
   UPLOADING: 'bg-paper-dark text-ink-soft',
   QUEUED: 'bg-paper-dark text-ink-soft',
-  RUNNING: 'bg-seal/15 text-seal-dark',
-  DONE: 'bg-seal text-white',
+  RUNNING: 'bg-ink/10 text-ink',
+  DONE: 'bg-ink text-paper',
   FAILED: 'bg-red-100 text-red-800',
   NEEDS_OCR: 'bg-amber-100 text-amber-800',
 };
@@ -36,7 +36,7 @@ export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut }: 
     <div className="p-3">
       <button
         onClick={() => setFormOpen((open) => !open)}
-        className="mb-3 w-full rounded bg-seal px-3 py-2 text-sm font-semibold text-white hover:bg-seal-dark"
+        className="mb-3 w-full rounded bg-seal px-3 py-2 text-sm font-semibold text-on-seal hover:bg-seal-dark"
         aria-expanded={formOpen}
       >
         {formOpen ? 'Cancelar' : 'Subir un PDF'}
