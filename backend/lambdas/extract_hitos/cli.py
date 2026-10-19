@@ -39,7 +39,7 @@ def main() -> None:
     for h in sorted(result.hitos, key=lambda x: x["año"]):
         lng, lat = h["location"]["coordinates"]
         print(f"  {h['año']:>6} | {h['lugar']:<28} ({lat:.3f}, {lng:.3f}) [{h['ubicacionFuente']}] {h['titulo']}")
-        print(f"           cita: {h['_evidencia'][:150]!r}")
+        print(f"           pág. {h.get('pagina', '?')} | cita: {h['evidencia'][:150]!r}")
         for person in h.get("_personajes", []):
             life = f" ({person['nacimiento']}..{person['muerte']})" if person["nacimiento"] or person["muerte"] else ""
             print(f"           personaje: {person['nombre_en']} / {person['nombre_zh']}{life} — {person['rol_en']} | menciones {person['menciones']} | alias {person['alias']}")

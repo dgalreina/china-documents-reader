@@ -140,6 +140,33 @@ def evidence_is_valid(evidence: str, place_names: list[str], source_text: str) -
     return any("".join(_tokens(name)) and "".join(_tokens(name)) in flat for name in place_names if name)
 
 
+PAGE_MIN_OVERLAP = 0.3  # fracción de las palabras de la cita que debe contener el párrafo elegido para fiarse de su página
+
+
+def locate_page(evidence: str, chunks: list[dict]) -> int | None:
+    """Página del libro en la que está la cita de un hito: la del párrafo que más palabras de la cita contiene.
+
+    Cada chunk trae `paragraphPages` (la página de cada párrafo, en el orden en que van en `text`); si no la trae (chunks antiguos) se usa `pageStart`.
+    En un empate gana el primero (una cita que cruza el salto de página cuenta en la página donde empieza). Devuelve None si ningún párrafo se parece
+    lo bastante: mejor sin página que con una equivocada.
+    """
+    quote = _tokens(evidence)
+    if not quote:
+        return None
+    best_page, best_score = None, 0
+    for chunk in chunks:
+        pages = chunk.get("paragraphPages") or []
+        for i, paragraph in enumerate(chunk["text"].split("\n\n")):
+            page = pages[i] if i < len(pages) else chunk.get("pageStart")
+            if page is None:
+                continue
+            words = set(_tokens(paragraph))
+            score = sum(1 for word in quote if word in words)
+            if score > best_score:
+                best_page, best_score = page, score
+    return best_page if best_score / len(quote) >= PAGE_MIN_OVERLAP else None
+
+
 # "King Wu of Zhou" -> también "King Wu"; "Rey Wu de Zhou" -> "Rey Wu"
 OF_SUFFIX = re.compile(r"\s+(of|de)\s+\w+$", re.IGNORECASE)
 MIN_LATIN_FORM = 3  # un alias de 1-2 letras ("Wu", "Fa") casaría dentro de otros nombres; solo vale si viene literal del texto

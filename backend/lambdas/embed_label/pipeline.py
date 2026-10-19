@@ -106,6 +106,8 @@ def embed_and_label(
             "añoFin": label.years.ano_fin,
             "pageStart": chunk.page_start,
             "pageEnd": chunk.page_end,
+            # Página de cada párrafo del chunk: lo usa extract_hitos para dar la página exacta de cada hito (y vale para citar por página).
+            "paragraphPages": list(chunk.paragraph_pages),
         }
         # Parte 3: ubicación (opcional). Sin sitio claro o sin resolver, el chunk se guarda igual, sin ella.
         if label.site:

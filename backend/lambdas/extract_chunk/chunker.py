@@ -18,6 +18,10 @@ class Chunk:
     text: str
     page_start: int
     page_end: int
+    # Página de CADA párrafo del chunk (los párrafos van separados por una línea en blanco en `text`). Un chunk cruza el límite de página con
+    # frecuencia, y con solo page_start/page_end no se sabe en cuál de las dos está una frase; con esto sí (lo usa extract_hitos para dar la
+    # página exacta de cada hito). Vacío en chunks antiguos: entonces se usa page_start.
+    paragraph_pages: tuple[int, ...] = ()
 
 
 def _split_long(text: str, max_chars: int):
@@ -60,6 +64,7 @@ def _build(index: int, units: list[tuple[str, int]]) -> Chunk:
         text="\n\n".join(text for text, _ in units),
         page_start=units[0][1],
         page_end=units[-1][1],
+        paragraph_pages=tuple(page for _, page in units),
     )
 
 

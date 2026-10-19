@@ -13,12 +13,13 @@ from openai import OpenAI
 from shared.geocoder import Geocoder, normalize
 
 from ..embed_label.pipeline import make_client
-from .extractor import ExtractedHito, clean_personaje, evidence_is_valid, extract_group, has_cjk, year_in_range
+from .extractor import ExtractedHito, clean_personaje, evidence_is_valid, extract_group, has_cjk, locate_page, year_in_range
 from .ids import hito_id
 
 DEFAULT_HITOS_MODEL = "gpt-4o"
 GROUP_SIZE = 5  # chunks consecutivos por llamada (~6000 caracteres): contexto suficiente sin gastar de más
 ORIGIN = "china-documents-reader"  # marca propia: permite distinguir (y no tocar) los hitos de china-history
+MAX_EVIDENCE_CHARS = 500  # tope de la cita guardada
 
 
 @dataclass
@@ -109,8 +110,15 @@ def extract_hitos(
                 "origen": ORIGIN,
                 "ubicacionFuente": geo.source,
                 "ubicacionCoincidencia": geo.matched_name,
-                "_evidencia": hito.evidencia,  # solo para revisar; los campos con _ no se escriben en Mongo
+                # La frase del libro que respalda el hecho: sirve para auditar el hito y, más adelante, para resaltarla en el visor.
+                "evidencia": " ".join(hito.evidencia.split())[:MAX_EVIDENCE_CHARS],
             }
+            # Página del libro (la del párrafo que contiene la cita). Opcional: sin ella el hito se guarda igual, solo que la web no puede saltar a su página.
+            pagina = locate_page(hito.evidencia, group)
+            if pagina is None:
+                result.stats["sin_pagina"] += 1
+            else:
+                doc["pagina"] = pagina
             # El chino es opcional: si el modelo no devolvió caracteres chinos, mejor sin él que con texto equivocado.
             for key in ("lugar_zh", "titulo_zh", "descripcion_zh"):
                 value = getattr(hito, key)

@@ -244,6 +244,12 @@ def validate_hito(hito: dict) -> None:
     for field_name in ("lugar_zh", "titulo_zh", "descripcion_zh"):
         if hito.get(field_name) and not CJK.search(hito[field_name]):
             raise ContractError(f"{where}: {field_name} no contiene caracteres chinos")
+    # Campos propios de esta app (china-history los ignora): la página del libro y la frase que respalda el hecho. Los dos son opcionales.
+    pagina = hito.get("pagina")
+    if pagina is not None and (not isinstance(pagina, int) or isinstance(pagina, bool) or pagina < 1):
+        raise ContractError(f"{where}: pagina debe ser un entero >= 1")
+    if hito.get("evidencia") is not None and not isinstance(hito["evidencia"], str):
+        raise ContractError(f"{where}: evidencia debe ser texto")
     for link in hito.get("personajes", []):
         if not isinstance(link, dict) or not PERSONAJE_ID.match(str(link.get("id", ""))) or not link.get("rol") or not link.get("menciones"):
             raise ContractError(f"{where}: enlace a personaje inválido {link!r}")
@@ -264,7 +270,7 @@ def build_hito_operations(source: str, hitos: list[dict], job_id: str | None = N
     # El filtro incluye `origen` Y `fuente`: si el id ya existe pero es de otro origen (un hito de china-history) o de OTRO LIBRO
     # (el mismo hecho con el mismo título sale con el mismo id), el upsert intentaría insertar un duplicado y el índice único
     # lo rechaza. Nunca se pisa un hito ajeno.
-    clean = [  # _evidencia es solo de revisión; jobId marca qué ejecución lo escribió
+    clean = [  # los campos con _ (p. ej. _personajes, ya resueltos) son de trabajo y no se escriben; jobId marca qué ejecución lo escribió
         {**{k: v for k, v in hito.items() if not k.startswith("_")}, **({"jobId": job_id} if job_id else {})} for hito in hitos
     ]
     return [ReplaceOne({"id": hito["id"], "origen": ORIGIN, "fuente": source}, hito, upsert=True) for hito in clean]
