@@ -6,6 +6,6 @@ import { CiStack } from '../lib/ci-stack';
 const app = new cdk.App();
 new CiStack(app, 'ChinaDocumentsCiStack', {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'eu-west-1' },
-  repo: String(app.node.tryGetContext('repo') ?? 'dgalreina/china-documents-reader'),
+  repo: String(app.node.tryGetContext('repo') ?? 'dgalreina@10922961/china-documents-reader@1422116311'),
   description: 'china-documents-reader: acceso de GitHub Actions (OIDC) para desplegar sin claves',
 });

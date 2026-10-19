@@ -3,7 +3,10 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
 export interface CiStackProps extends cdk.StackProps {
-  /** "dueño/repositorio" de GitHub, el único que puede asumir el rol. */
+  /**
+   * Cómo se identifica el repo en el token de GitHub: "dueño@idDueño/repo@idRepo" (los números salen de la API de GitHub y no cambian aunque se renombre o se borre
+   * y se recree el repo con el mismo nombre). El formato sin números ("dueño/repo") ya no es el que manda GitHub: con él AWS rechaza el acceso.
+   */
   repo: string;
 }
 
