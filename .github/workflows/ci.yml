@@ -1,0 +1,143 @@
+# Pruebas en cada push y pull request; despliegue automático a AWS al hacer push a main.
+#
+# Despliegue: `plan` calcula los cambios (cdk diff) y decide si son delicados (permisos, borrados). Si no lo son, `deploy` entra en el environment "despliegue"
+# y se aplica solo; si lo son, entra en "aprobacion", que en GitHub tiene un revisor obligatorio: se queda esperando un clic. Ver infra/README.md.
+# Sin claves guardadas: GitHub se identifica ante AWS con OIDC (rol creado por ChinaDocumentsCiStack).
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', 'frontend/**', 'infra/**', '.github/**']
+  pull_request:
+    paths: ['backend/**', 'frontend/**', 'infra/**', '.github/**']
+  workflow_dispatch: # botón manual en la pestaña Actions
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # un despliegue en marcha nunca se cancela a medias
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            infra/package-lock.json
+      - name: Backend (pytest)
+        working-directory: backend
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest -q
+      - name: Frontend (tsc + vitest)
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm test
+      - name: Infra (tsc)
+        working-directory: infra
+        run: |
+          npm ci
+          npm run build
+
+  plan:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # pedir el token OIDC
+      contents: read
+    outputs:
+      sensitive: ${{ steps.classify.outputs.sensitive }}
+      reasons: ${{ steps.classify.outputs.reasons }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            infra/package-lock.json
+      - name: Dependencias de npm
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix infra
+      - name: Construir Lambdas (Linux) y web
+        working-directory: infra
+        run: |
+          npm run build:lambda
+          npm run build:front
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-west-1
+      - name: Calcular cambios (cdk diff)
+        working-directory: infra
+        run: npx cdk diff ChinaDocumentsStack --no-color > diff.txt 2>&1 || true
+      - name: Clasificar
+        id: classify
+        working-directory: infra
+        run: node scripts/classify-diff.mjs diff.txt
+      - name: Resumen
+        working-directory: infra
+        run: |
+          {
+            echo "## Cambios en AWS"
+            echo "**${{ steps.classify.outputs.sensitive == 'true' && 'DELICADO, espera aprobación' || 'Normal, se despliega solo' }}** ${{ steps.classify.outputs.reasons }}"
+            echo '```'
+            tail -c 60000 diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Lo que se revisa es lo que se despliega: el paquete ya construido pasa tal cual al job siguiente.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquete
+          path: |
+            infra/build
+            frontend/dist
+          retention-days: 1
+
+  deploy:
+    needs: plan
+    # Cambio normal -> "despliegue" (sin revisor). Delicado -> "aprobacion" (con revisor obligatorio, configurado en GitHub).
+    environment: ${{ needs.plan.outputs.sensitive == 'true' && 'aprobacion' || 'despliegue' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - run: npm ci --prefix infra
+      - uses: actions/download-artifact@v4
+        with:
+          name: paquete
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-west-1
+      - name: Desplegar
+        working-directory: infra
+        run: npx cdk deploy ChinaDocumentsStack --require-approval never --no-color

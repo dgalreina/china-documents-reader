@@ -225,6 +225,10 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   **Identidad visual:** acento ROJO ZHOU `#8e1b1b` (seal-dark `#6c1212`, texto `#f6efe4`), el mismo del portfolio; el verde Shang es el de china-history. 'Listo'/'Analizando'
   van en neutro (tinta) para no confundirse con 'Error'. El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
 
+  **CI/CD (hecho):** `.github/workflows/ci.yml` (tests en cada push; push a `main` -> `cdk diff` clasificado -> despliegue automatico, o con aprobacion humana si el cambio es delicado: IAM,
+  borrados, sustituciones). OIDC sin claves: rol `china-documents-github-deploy` (`ChinaDocumentsCiStack`, `infra/lib/ci-stack.ts`), variable `AWS_ROLE_ARN`, environments `despliegue` y `aprobacion`.
+  `npm run deploy` local sigue valiendo. Ver `infra/README.md`.
+
 ## Ideas apuntadas (sin implementar)
 
 - **Libros escaneados / imagenes sueltas (para el FINAL, decidido con el usuario):** hoy un PDF sin texto acaba en `NEEDS_OCR`. Un solo paso de OCR por paginas

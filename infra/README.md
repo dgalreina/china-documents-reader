@@ -89,3 +89,15 @@ aws cognito-idp admin-initiate-auth --user-pool-id <UserPoolId> --client-id <Use
 - Los secretos nunca van en variables de entorno ni en el repositorio.
 - `cdk destroy` borra todo menos los buckets de libros y de datos geográficos (son datos del usuario). Si se quieren borrar de verdad, vaciarlos y eliminarlos a mano.
 - La traducción cuesta ≈ 0,01 USD por página (medido con `gpt-4o`) y solo se paga una vez por página: queda en `translations/`.
+
+## CI/CD (GitHub Actions)
+
+`.github/workflows/ci.yml`: tests en cada push y pull request; al hacer push a `main` (si cambió `backend/`, `frontend/`, `infra/` o `.github/`) se despliega solo.
+
+1. `test`: pytest, `tsc` + vitest del front, `tsc` de la infra.
+2. `plan`: construye el paquete, ejecuta `cdk diff` y lo clasifica (`scripts/classify-diff.mjs`). **Delicado** = permisos IAM o de recursos nuevos, recursos que se borran o se sustituyen. El diff queda en el resumen de la ejecución.
+3. `deploy`: usa el environment `despliegue` (sin revisor, se aplica solo) o `aprobacion` (revisor obligatorio: espera un clic en GitHub si el cambio es delicado). Despliega el mismo paquete que se revisó.
+
+Sin claves guardadas: GitHub se identifica con OIDC y asume el rol `china-documents-github-deploy` (stack `ChinaDocumentsCiStack`, `lib/ci-stack.ts`), que solo acepta este repo desde `main` o desde los dos environments, y solo puede usar los roles del bootstrap de CDK.
+Puesta en marcha (una vez): `npm run deploy:ci` con `aws login`; variable de repositorio `AWS_ROLE_ARN`; environments `despliegue` y `aprobacion` (este con revisor), ambos limitados a la rama `main`.
+`npm run deploy` local sigue funcionando (sirve de plan B si el CI falla).
