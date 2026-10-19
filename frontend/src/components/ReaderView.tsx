@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { HEADER_HEIGHT } from '../lib/layout';
+import { clamp, usePinch } from '../lib/usePinch';
 import { DWELL_MS, ENGLISH_WINDOW, joinLines, pagesToLoad, splitCjk, splitParagraphs } from '../lib/translation';
 import { getPageText } from '../state/usePdfDocument';
 import type { Translations } from '../state/Translations';
 import type { JumpTarget } from '../types';
 
+const MIN_TEXT_SCALE = 0.8; // el pellizco cambia el tamaño del texto entre estos límites (1 = el tamaño normal)
+const MAX_TEXT_SCALE = 2.4;
+const BASE_FONT_PX = 16;
 const PLACEHOLDER_HEIGHT = 1000; // px mínimos de una página sin traducir (más o menos lo que ocupa una página en español)
 
 interface ReaderViewProps {
@@ -33,6 +37,8 @@ export function ReaderView({ doc, translations, target, onPageChange }: ReaderVi
   const [english, setEnglish] = useState<Record<number, string>>({});
   const requestedEnglish = useRef(new Set<number>());
   const anchor = useRef<{ page: number; offset: number } | null>(null);
+  const [textScale, setTextScale] = useState(1); // el zoom del lector: el tamaño del texto (el PDF original hace zoom de la página)
+  const committedScale = useRef(1); // el tamaño al empezar el pellizco en curso
 
   const callbacks = useRef({ onPageChange });
   callbacks.current = { onPageChange };
@@ -81,18 +87,35 @@ export function ReaderView({ doc, translations, target, onPageChange }: ReaderVi
     if (!saved || !scroller || !element) return;
     const delta = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - saved.offset;
     if (Math.abs(delta) > 0.5) scroller.scrollTop += delta;
-  }, [translations.pages, english]);
+  }, [translations.pages, english, textScale]);
 
   useEffect(() => {
     callbacks.current.onPageChange(current);
   }, [current]);
+
+  // Pellizcar (o Ctrl + rueda) cambia el tamaño del texto; el navegador no hace zoom de la web entera.
+  usePinch(scrollRef, {
+    onPinch: (ratio) => setTextScale(clamp(committedScale.current * ratio, MIN_TEXT_SCALE, MAX_TEXT_SCALE)),
+    onPinchEnd: (ratio) => {
+      committedScale.current = clamp(committedScale.current * ratio, MIN_TEXT_SCALE, MAX_TEXT_SCALE);
+      setTextScale(committedScale.current);
+    },
+    onWheelZoom: (factor) => {
+      committedScale.current = clamp(committedScale.current * factor, MIN_TEXT_SCALE, MAX_TEXT_SCALE);
+      setTextScale(committedScale.current);
+    },
+  });
 
   // Pedir traducción solo cuando la página lleva un rato a la vista.
   useEffect(() => {
     const timer = setTimeout(() => setSettled(current), DWELL_MS);
     return () => clearTimeout(timer);
   }, [current]);
-  const { request } = translations;
+  const { request, peek } = translations;
+  // Lo que ya está en la caché del navegador se pone enseguida, sin esperar a que la página lleve un rato a la vista (así no pasa por el inglés).
+  useEffect(() => {
+    peek(pagesToLoad(current, doc.numPages));
+  }, [current, doc.numPages, peek]);
   useEffect(() => {
     if (settled < 1) return;
     request(pagesToLoad(settled, doc.numPages));
@@ -122,8 +145,8 @@ export function ReaderView({ doc, translations, target, onPageChange }: ReaderVi
   }, [target, doc]);
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto overflow-x-hidden overscroll-none bg-paper-dark" style={{ overflowAnchor: 'none' }} data-testid="reader-scroll">
-      <div ref={listRef} className="relative mx-auto max-w-[44rem] bg-paper" style={{ paddingTop: HEADER_HEIGHT }}>
+    <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto overflow-x-hidden overscroll-none bg-paper-dark" style={{ overflowAnchor: 'none', touchAction: 'pan-y' }} data-testid="reader-scroll">
+      <div ref={listRef} className="relative mx-auto max-w-[44rem] bg-paper" style={{ paddingTop: HEADER_HEIGHT, '--reader-font': `${BASE_FONT_PX * textScale}px` } as React.CSSProperties}>
         {Array.from({ length: doc.numPages }, (_, index) => {
           const page = index + 1;
           return (
@@ -158,7 +181,7 @@ function ReaderPage({ page, state, english, onRetry }: ReaderPageProps) {
       </div>
       {state?.status === 'done' ? (
         state.text ? (
-          <div className="space-y-3 font-serif text-[16px] leading-relaxed text-ink">
+          <div className="space-y-3 font-serif leading-relaxed text-ink" style={{ fontSize: 'var(--reader-font)' }}>
             {splitParagraphs(state.text).map((paragraph, index) => (
               <p key={index}>
                 {splitCjk(paragraph).map((run, i) =>
@@ -187,7 +210,7 @@ function ReaderPage({ page, state, english, onRetry }: ReaderPageProps) {
             </div>
           )}
           {english ? (
-            <p lang="en" className="font-serif text-[16px] leading-relaxed text-ink-soft opacity-60">
+            <p lang="en" className="font-serif leading-relaxed text-ink-soft opacity-60" style={{ fontSize: 'var(--reader-font)' }}>
               {english}
             </p>
           ) : (

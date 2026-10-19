@@ -26,6 +26,10 @@ export interface ApiClient {
   listJobs(): Promise<Job[]>;
   getHitos(slug: string): Promise<Hito[]>;
   getPersonajes(slug: string): Promise<Personaje[]>;
+  /** Los hitos de TODOS los libros, cada uno con su `fuente` (el libro). Una sola petición. */
+  getAllHitos(): Promise<Hito[]>;
+  /** Los personajes de TODOS los libros, cada uno con sus `fuentes`. */
+  getAllPersonajes(): Promise<Personaje[]>;
   /** URL temporal (firmada) desde la que el visor abre el PDF del libro. */
   getPdfUrl(slug: string): Promise<string>;
   /** Valida, sube el PDF y arranca el análisis. Rechaza con un mensaje en español si algo no es válido. */

@@ -74,31 +74,31 @@ export function useLibrary(): LibraryValue {
   return value;
 }
 
-/** Hitos y personajes del libro abierto. Solo se piden si la API los tiene; se vuelven a pedir cuando cambia `version` (p. ej. al terminar un análisis). */
-export function useBookData(slug: string | undefined, version: string | undefined) {
+/** Hitos y personajes de TODOS los libros (cada uno dice de cuál). Solo se piden si la API los tiene; se vuelven a pedir cuando cambia `version` (p. ej. al terminar un análisis o borrar un libro). */
+export function useAllBookData(version: string) {
   const { api } = useLibrary();
   const [hitos, setHitos] = useState<Hito[]>([]);
   const [personajes, setPersonajes] = useState<Personaje[]>([]);
 
   useEffect(() => {
-    if (!slug || !api.features.hitos) {
+    if (!api.features.hitos) {
       setHitos([]);
       setPersonajes([]);
       return;
     }
     let cancelled = false;
-    void Promise.all([api.getHitos(slug), api.getPersonajes(slug)]).then(
+    void Promise.all([api.getAllHitos(), api.getAllPersonajes()]).then(
       ([nextHitos, nextPersonajes]) => {
         if (cancelled) return;
         setHitos(nextHitos);
         setPersonajes(nextPersonajes);
       },
-      () => undefined, // un fallo al cargar hitos no debe tumbar la pantalla: la lista queda vacía
+      () => undefined, // un fallo al cargar hitos no debe tumbar la pantalla: la lista queda como estaba
     );
     return () => {
       cancelled = true;
     };
-  }, [api, slug, version]);
+  }, [api, version]);
 
   return { hitos, personajes };
 }

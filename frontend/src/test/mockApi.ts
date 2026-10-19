@@ -124,6 +124,12 @@ export class MockApi implements ApiClient {
   async listJobs(): Promise<Job[]> { return this.jobs.map((job) => ({ ...job })); }
   async getHitos(slug: string): Promise<Hito[]> { return [...(this.hitos.get(slug) ?? [])]; }
   async getPersonajes(slug: string): Promise<Personaje[]> { return [...(this.personajes.get(slug) ?? [])]; }
+  async getAllHitos(): Promise<Hito[]> {
+    return [...this.hitos].flatMap(([slug, list]) => list.map((hito) => ({ ...hito, fuente: slug }))).sort((a, b) => a.año - b.año);
+  }
+  async getAllPersonajes(): Promise<Personaje[]> {
+    return [...this.personajes].flatMap(([slug, list]) => list.map((person) => ({ ...person, fuentes: [slug] })));
+  }
 
   private busy(slug: string): boolean {
     return this.jobs.some((job) => job.slug === slug && (job.status === 'RUNNING' || job.status === 'QUEUED' || job.status === 'UPLOADING'));

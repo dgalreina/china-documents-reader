@@ -460,6 +460,9 @@ export class ChinaDocumentsStack extends cdk.Stack {
     api.addRoutes({ path: '/books/{slug}', methods: [apigw.HttpMethod.DELETE], integration: new integrations.HttpLambdaIntegration('BookDeleteIntegration', deleteBook) });
     api.addRoutes({ path: '/books/{slug}/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookHitosIntegration', readHitos) });
     api.addRoutes({ path: '/books/{slug}/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPersonajesIntegration', readHitos) });
+    // Los hitos y personajes de TODOS los libros (cada uno dice de cuál): una sola petición en lugar de una por libro (el freno de la API es de 2 por segundo).
+    api.addRoutes({ path: '/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('AllHitosIntegration', readHitos) });
+    api.addRoutes({ path: '/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('AllPersonajesIntegration', readHitos) });
     api.addRoutes({ path: '/jobs/{jobId}', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobStatusIntegration', jobStatus) });
     // La traducción de una página: el navegador manda solo libro y página (nunca texto). Va detrás del mismo autorizador JWT que el resto (es el
     // defaultAuthorizer de la API) y bajo el mismo freno de peticiones.

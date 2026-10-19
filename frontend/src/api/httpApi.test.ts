@@ -195,6 +195,18 @@ describe('hitos y personajes', () => {
     expect(person).toEqual({ id: 'p1', nombre: 'Rey Wu', nombreZh: '周武王', rol: 'rey', estado: undefined, descripcion: 'Un rey.', nacimiento: undefined, muerte: -1043, hitoIds: ['a', 'b'] });
   });
 
+  it('la lista de todos los libros conserva de qué libro es cada hito y en qué libros sale cada personaje', async () => {
+    const server = fakeServer({
+      'GET /hitos': () => ({ body: { hitos: [{ id: 'a', titulo: 'Muye', año: -1046, fuente: 'libro-a', personajes: [] }, { id: 'b', titulo: 'Sin libro' }] } }),
+      'GET /personajes': () => ({ body: { personajes: [{ id: 'p1', nombre: 'Rey Wu', hitoIds: ['a'], fuentes: ['libro-a', 'libro-b'] }] } }),
+    });
+    const api = makeApi(server);
+    const [con, sin] = await api.getAllHitos();
+    expect(con.fuente).toBe('libro-a');
+    expect(sin.fuente).toBeUndefined();
+    expect((await api.getAllPersonajes())[0].fuentes).toEqual(['libro-a', 'libro-b']);
+  });
+
   it('un 502 del servidor llega como un mensaje que se puede enseñar', async () => {
     const server = fakeServer({ 'GET /books/mi-libro/hitos': () => ({ status: 502, body: { error: 'No se pudieron leer los datos del libro. Inténtalo de nuevo.' } }) });
     await expect(makeApi(server).getHitos('mi-libro')).rejects.toThrow(/No se pudieron leer/);

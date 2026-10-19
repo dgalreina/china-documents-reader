@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from lambdas.read_hitos.handler import MAX_HITOS, handler
+from lambdas.read_hitos.handler import MAX_HITOS, MAX_HITOS_ALL, handler
 from lambdas.write_mongo.store import ORIGIN
 
 
@@ -162,3 +162,49 @@ def test_un_fallo_de_la_base_de_datos_es_502_sin_detalles():
 
 def test_una_ruta_desconocida_es_404():
     assert handler({"routeKey": "GET /otra"}, db=FakeDB())["statusCode"] == 404
+
+
+# --- todos los libros: GET /hitos y GET /personajes ---
+
+
+def all_of(route, db):
+    response = handler({"routeKey": route}, db=db)
+    return response["statusCode"], json.loads(response["body"])
+
+
+def test_todos_los_hitos_son_de_todos_los_libros_de_esta_app_y_cada_uno_dice_de_cual():
+    db = FakeDB([
+        h("a" * 10, -770, slug="libro-a"),
+        h("b" * 10, -1046, slug="libro-b"),
+        {**h("c" * 10, -1046, slug="libro-a"), "origen": "china-history"},  # un hito de china-history: nunca
+    ])
+    status, body = all_of("GET /hitos", db)
+    assert status == 200 and [(x["id"], x["fuente"]) for x in body["hitos"]] == [("b" * 10, "libro-b"), ("a" * 10, "libro-a")]
+    assert db["hitos_conocidos"].queries[0] == {"origen": ORIGIN}  # sin filtro de libro, pero SIEMPRE con el de origen
+
+
+def test_el_hito_de_un_solo_libro_sigue_sin_llevar_el_libro():
+    (hito,) = hitos_of(FakeDB([h("a" * 10, -770)]))[1]["hitos"]
+    assert "fuente" not in hito
+
+
+def test_un_personaje_que_sale_en_dos_libros_los_lleva_los_dos():
+    db = FakeDB(
+        [h("a" * 10, -1046, slug="libro-b", personajes=[link("1111111111")]), h("b" * 10, -770, slug="libro-a", personajes=[link("1111111111")])],
+        [p("1111111111", "Rey Wu")],
+    )
+    status, body = all_of("GET /personajes", db)
+    (wu,) = body["personajes"]
+    assert status == 200 and wu["fuentes"] == ["libro-a", "libro-b"] and wu["hitoIds"] == ["a" * 10, "b" * 10]
+
+
+def test_el_personaje_de_un_solo_libro_sigue_sin_fuentes():
+    db = FakeDB([h("a" * 10, -1046, personajes=[link("1111111111")])], [p("1111111111", "Rey Wu")])
+    (wu,) = call("GET /books/{slug}/personajes", db)[1]["personajes"]
+    assert "fuentes" not in wu
+
+
+def test_la_lista_de_todos_tiene_su_propio_tope():
+    db = FakeDB([h(f"{i:010x}", -1000 + i) for i in range(MAX_HITOS + 20)])
+    assert len(all_of("GET /hitos", db)[1]["hitos"]) == MAX_HITOS + 20  # el tope por libro no aplica aquí
+    assert MAX_HITOS_ALL > MAX_HITOS

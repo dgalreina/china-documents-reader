@@ -15,7 +15,7 @@ import { PersonajesTab } from './components/tabs/PersonajesTab';
 import { ProgressTab } from './components/tabs/ProgressTab';
 import { analysisState } from './lib/analysis';
 import { HEADER_HEIGHT } from './lib/layout';
-import { LibraryProvider, useBookData, useLibrary } from './state/Library';
+import { LibraryProvider, useAllBookData, useLibrary } from './state/Library';
 import { useTranslations } from './state/Translations';
 import { loadPdfjs, usePdfDocument } from './state/usePdfDocument';
 import { usePdfUrl } from './state/usePdfUrl';
@@ -80,13 +80,13 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const [mode, setMode] = useState<ReadMode>(loadMode);
   const [analyzing, setAnalyzing] = useState<Book | null>(null); // el libro cuyo análisis se está a punto de pedir (se confirma el coste antes)
 
-  // Los hitos se vuelven a pedir cuando el libro cambia (p. ej. al terminar un análisis).
-  const { hitos, personajes } = useBookData(book?.slug, book ? `${book.analysis}:${book.updatedAt ?? ''}` : undefined);
+  // Hitos y personajes de TODOS los libros; se vuelven a pedir cuando cambia alguno (p. ej. al terminar un análisis o al borrar un libro).
+  const { hitos, personajes } = useAllBookData(books.map((candidate) => `${candidate.slug}:${candidate.analysis}:${candidate.updatedAt ?? ''}`).join('|'));
   const { url: pdfUrl, error: pdfError } = usePdfUrl(client, book?.slug); // un libro del catálogo siempre tiene su PDF, analizado o no
   const analysis = book ? analysisState(book, jobs) : null;
   const pdf = usePdfDocument(pdfUrl);
   const pageCount = pdf.doc?.numPages ?? 0;
-  const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null);
+  const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null, book?.createdAt);
   const activeJobs = jobs.filter((job) => job.status === 'UPLOADING' || job.status === 'QUEUED' || job.status === 'RUNNING').length;
 
   // Solo las pestañas que tienen datos reales detrás.
@@ -105,6 +105,14 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
       /* sin almacenamiento: no se recuerda, y ya */
     }
     setTarget({ page: currentPage, nonce: Date.now(), instant: true }); // el otro visor arranca en la página que se estaba leyendo
+  };
+  // Ir a una página de un libro: si es otro distinto del abierto, se abre y la página queda como destino (el visor salta a ella al cargar).
+  const goTo = (targetSlug: string, page: number) => {
+    if (targetSlug === slug) return goToPage(page);
+    navigate(`/libros/${targetSlug}`);
+    setCurrentPage(page);
+    setTarget({ page, nonce: Date.now(), instant: true });
+    if (!isDesktop()) setDrawerOpen(false);
   };
   const select = (nextSlug: string) => {
     navigate(`/libros/${nextSlug}`);
@@ -222,8 +230,12 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
               />
             ),
             progreso: <ProgressTab jobs={jobs} books={books} onSelect={select} />,
-            hitos: <HitosTab hitos={hitos} currentPage={currentPage} onGoToPage={goToPage} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />,
-            personajes: <PersonajesTab personajes={personajes} hitos={hitos} onGoToPage={goToPage} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />,
+            hitos: (
+              <HitosTab hitos={hitos} books={books} currentSlug={book?.slug} currentPage={currentPage} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />
+            ),
+            personajes: (
+              <PersonajesTab personajes={personajes} hitos={hitos} books={books} currentSlug={book?.slug} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />
+            ),
             agente: <AgentTab api={client} slug={book?.slug ?? null} onGoToPage={goToPage} />,
           }}
         />

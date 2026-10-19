@@ -64,6 +64,7 @@ interface ServerHito {
   año?: number;
   lugar?: string;
   pagina?: number | null;
+  fuente?: string;
   personajes?: { id: string; nombre?: string; rol?: string }[];
 }
 
@@ -77,6 +78,7 @@ interface ServerPersonaje {
   nacimiento?: number | null;
   muerte?: number | null;
   hitoIds?: string[];
+  fuentes?: string[];
 }
 
 /** Estado de una subida que ESTE navegador está haciendo (el servidor no sabe cuántos bytes han llegado). */
@@ -138,6 +140,7 @@ export function mapHito(hito: ServerHito): Hito {
     año: num(hito.año),
     lugar: hito.lugar ?? '',
     pagina,
+    fuente: optional(hito.fuente),
     personajes: (hito.personajes ?? []).map((person): PersonajeRef => ({ id: person.id, nombre: person.nombre ?? '', rol: person.rol ?? '' })),
   };
 }
@@ -153,6 +156,7 @@ export function mapPersonaje(person: ServerPersonaje): Personaje {
     nacimiento: optional(person.nacimiento),
     muerte: optional(person.muerte),
     hitoIds: person.hitoIds ?? [],
+    fuentes: person.fuentes,
   };
 }
 
@@ -292,6 +296,16 @@ export class HttpApi implements ApiClient {
 
   async getPersonajes(slug: string): Promise<Personaje[]> {
     const { personajes } = await this.request<{ personajes: ServerPersonaje[] }>(`/books/${encodeURIComponent(slug)}/personajes`);
+    return personajes.map(mapPersonaje);
+  }
+
+  async getAllHitos(): Promise<Hito[]> {
+    const { hitos } = await this.request<{ hitos: ServerHito[] }>('/hitos');
+    return hitos.map(mapHito);
+  }
+
+  async getAllPersonajes(): Promise<Personaje[]> {
+    const { personajes } = await this.request<{ personajes: ServerPersonaje[] }>('/personajes');
     return personajes.map(mapPersonaje);
   }
 

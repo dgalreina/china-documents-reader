@@ -31,6 +31,11 @@
   --font-brush: "Noto Serif SC", serif;
 }
 
+* {
+  /* Solo desplazar: ni zoom de la página con dos dedos ni zoom con doble toque. El visor del PDF y el lector tratan el pellizco ellos mismos (lib/usePinch.ts). */
+  touch-action: pan-x pan-y;
+}
+
 html,
 body,
 #root {

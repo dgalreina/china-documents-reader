@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { analysisState, type AnalysisStatus } from '../../lib/analysis';
 import { MAX_PDF_MB, isValidSlug, suggestSlug, suggestTitle, validatePdf } from '../../lib/files';
+import { formatPercent } from '../../lib/format';
+import { pendingUploads } from '../../lib/uploads';
 import type { Book, Job } from '../../types';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Cover } from '../Cover';
@@ -43,6 +45,7 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
   const [pending, setPending] = useState<Book | null>(null); // el libro que se está a punto de borrar
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const uploading = pendingUploads(jobs, books, Date.now()); // los libros que se están subiendo y todavía no están en el catálogo
 
   const closeDialog = () => {
     setPending(null);
@@ -82,10 +85,13 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
         />
       )}
 
-      {books.length === 0 ? (
+      {books.length === 0 && uploading.length === 0 ? (
         <p className="py-6 text-center text-sm text-stone">Todavía no hay libros. Sube un PDF para empezar.</p>
       ) : (
         <ul className="space-y-2">
+          {uploading.map((job) => (
+            <UploadingCard key={job.jobId} job={job} />
+          ))}
           {books.map((book) => {
             const analysis = analysisState(book, jobs);
             const current = book.slug === currentSlug;
@@ -143,6 +149,24 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
         </button>
       )}
     </div>
+  );
+}
+
+/** Un libro que se está subiendo: ya sale en la lista (con su avance) y se convierte solo en la tarjeta normal cuando llega al catálogo. */
+function UploadingCard({ job }: { job: Job }) {
+  return (
+    <li className="flex gap-3 rounded border border-line bg-white/50 p-3" aria-busy="true">
+      <Cover />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-sm font-semibold">{job.title ?? job.slug}</span>
+          <span className="shrink-0 whitespace-nowrap rounded bg-ink/10 px-1.5 py-0.5 text-[11px] font-semibold text-ink">Subiendo…</span>
+        </div>
+        <div role="progressbar" aria-label="Subiendo" aria-valuenow={job.progress === null ? undefined : Math.round(job.progress * 100)} className="mt-2 h-2 overflow-hidden rounded bg-paper-dark">
+          <div className={`h-full bg-seal ${job.progress === null ? 'w-1/3 animate-pulse' : 'transition-all'}`} style={job.progress === null ? undefined : { width: formatPercent(job.progress) }} />
+        </div>
+      </div>
+    </li>
   );
 }
 

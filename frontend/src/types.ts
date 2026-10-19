@@ -67,6 +67,8 @@ export interface Hito {
   lugar: string;
   /** Página del PDF en la que se cuenta. Puede faltar (los hitos antiguos no la guardan). */
   pagina?: number;
+  /** El libro (su `slug`) del que sale. Solo en la lista de todos los libros. */
+  fuente?: string;
   personajes: PersonajeRef[];
 }
 
@@ -80,6 +82,8 @@ export interface Personaje {
   nacimiento?: number;
   muerte?: number;
   hitoIds: string[];
+  /** Los libros (sus `slug`) en que sale. Solo en la lista de todos los libros. */
+  fuentes?: string[];
 }
 
 export interface Fuente {
