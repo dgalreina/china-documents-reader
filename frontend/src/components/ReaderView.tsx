@@ -122,7 +122,7 @@ export function ReaderView({ doc, translations, target, onPageChange }: ReaderVi
   }, [target, doc]);
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto bg-paper-dark" style={{ overflowAnchor: 'none' }} data-testid="reader-scroll">
+    <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto overflow-x-hidden overscroll-none bg-paper-dark" style={{ overflowAnchor: 'none' }} data-testid="reader-scroll">
       <div ref={listRef} className="relative mx-auto max-w-[44rem] bg-paper" style={{ paddingTop: HEADER_HEIGHT }}>
         {Array.from({ length: doc.numPages }, (_, index) => {
           const page = index + 1;

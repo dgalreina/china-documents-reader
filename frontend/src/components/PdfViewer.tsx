@@ -17,6 +17,24 @@ interface PdfViewerProps {
   onPageChange: (page: number) => void;
 }
 
+/**
+ * El ancho "asentado": sigue al ancho real, pero espera a que deje de cambiar. Mientras se mueve el panel lateral el ancho cambia en cada fotograma, y volver a
+ * dibujar el PDF cada vez iría a tirones: las páginas se escalan con CSS durante el movimiento y solo se redibujan nítidas cuando termina. La primera medida no espera.
+ */
+function useSettledWidth(width: number, delay = 160): number {
+  const [settled, setSettled] = useState(width);
+  useEffect(() => {
+    if (width === settled) return;
+    if (settled === 0) {
+      setSettled(width);
+      return;
+    }
+    const timer = setTimeout(() => setSettled(width), delay);
+    return () => clearTimeout(timer);
+  }, [width, settled, delay]);
+  return settled;
+}
+
 export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -41,6 +59,7 @@ export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) 
   }, []);
 
   const pageWidth = Math.max(0, Math.min(width - SIDE_PADDING * 2, MAX_PAGE_WIDTH));
+  const renderWidth = Math.max(0, Math.min(useSettledWidth(width) - SIDE_PADDING * 2, MAX_PAGE_WIDTH)); // el ancho con el que se dibujan los píxeles
   const pageHeight = pageWidth * ratio;
   const slot = pageHeight + PAGE_GAP;
 
@@ -73,12 +92,12 @@ export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) 
   }, [target, doc, slot]);
 
   return (
-    <div ref={scrollRef} onScroll={updateRange} className="h-full overflow-y-auto bg-paper-dark" data-testid="pdf-scroll">
+    <div ref={scrollRef} onScroll={updateRange} className="h-full overflow-y-auto overflow-x-hidden overscroll-none bg-paper-dark" data-testid="pdf-scroll">
       <div style={{ padding: `${HEADER_HEIGHT + PAGE_GAP}px ${SIDE_PADDING}px ${PAGE_GAP}px`, width: pageWidth + SIDE_PADDING * 2, margin: '0 auto' }}>
         {Array.from({ length: doc.numPages }, (_, index) => {
           const pageNumber = index + 1;
           const active = pageNumber >= range.first - BUFFER_PAGES && pageNumber <= range.last + BUFFER_PAGES;
-          return <PdfPage key={pageNumber} doc={doc} pageNumber={pageNumber} width={pageWidth} height={pageHeight} active={active} />;
+          return <PdfPage key={pageNumber} doc={doc} pageNumber={pageNumber} width={pageWidth} renderWidth={renderWidth} height={pageHeight} active={active} />;
         })}
       </div>
     </div>
@@ -88,18 +107,21 @@ export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) 
 interface PdfPageProps {
   doc: PDFDocumentProxy;
   pageNumber: number;
+  /** Tamaño en pantalla (cambia al instante, también mientras se mueve el panel). */
   width: number;
   height: number;
+  /** Ancho con el que se dibuja el canvas (cambia cuando el ancho se ha asentado). */
+  renderWidth: number;
   active: boolean;
 }
 
 /** Una página. Reserva siempre su hueco (para que el scroll no salte) y solo dibuja el contenido cuando está cerca de lo visible. */
-function PdfPage({ doc, pageNumber, width, height, active }: PdfPageProps) {
+function PdfPage({ doc, pageNumber, width, height, renderWidth, active }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || width <= 0) return;
+    if (!canvas || renderWidth <= 0) return;
     if (!active) {
       canvas.width = 0; // libera la memoria de las páginas que ya quedan lejos
       canvas.height = 0;
@@ -109,13 +131,11 @@ function PdfPage({ doc, pageNumber, width, height, active }: PdfPageProps) {
     let task: { promise: Promise<unknown>; cancel: () => void } | null = null;
     void doc.getPage(pageNumber).then((page) => {
       if (cancelled) return;
-      const scale = width / page.getViewport({ scale: 1 }).width;
+      const scale = renderWidth / page.getViewport({ scale: 1 }).width;
       const viewport = page.getViewport({ scale });
       const dpr = Math.min(window.devicePixelRatio || 1, 2); // más nitidez en pantallas de alta densidad, sin pasarse de memoria
       canvas.width = Math.floor(viewport.width * dpr);
       canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
       task = page.render({ canvas, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined });
       task.promise.catch(() => undefined); // una cancelación (al hacer scroll rápido) no es un error
     });
@@ -123,11 +143,11 @@ function PdfPage({ doc, pageNumber, width, height, active }: PdfPageProps) {
       cancelled = true;
       task?.cancel();
     };
-  }, [doc, pageNumber, width, active]);
+  }, [doc, pageNumber, renderWidth, active]);
 
   return (
     <div data-page={pageNumber} className="mb-4 bg-white shadow" style={{ width, height }}>
-      <canvas ref={canvasRef} aria-label={`Página ${pageNumber}`} />
+      <canvas ref={canvasRef} aria-label={`Página ${pageNumber}`} className="block h-full w-full" />
     </div>
   );
 }

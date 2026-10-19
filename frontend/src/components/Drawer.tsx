@@ -23,22 +23,34 @@ interface DrawerProps {
   panels: Partial<Record<TabId, ReactNode>>;
 }
 
+// Movimiento del panel: 450 ms con una curva pareja (arranca y frena suave). Con "reducir movimiento" no se anima.
+const MOTION = 'duration-[450ms] ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none';
+
 /**
- * El panel de pestañas, que abre el usuario con la lengüeta del borde derecho. En ordenador EMPUJA al PDF (se lee y se consulta a la vez); en móvil se
- * desliza por encima ocupando casi todo el ancho, con una capa oscura detrás que lo cierra al tocarla. Cada pestaña lleva su icono y debajo el texto,
- * todas del mismo ancho: caben en el móvil sin desplazarse.
+ * El panel de pestañas, que abre el usuario con la lengüeta del borde derecho. En ordenador EMPUJA al PDF (se lee y se consulta a la vez): se ensancha
+ * poco a poco y el PDF se va estrechando; en móvil se desliza por encima ocupando casi todo el ancho, con una capa oscura que aparece despacio y lo
+ * cierra al tocarla. Cada pestaña lleva su icono y debajo el texto, todas del mismo ancho: caben en el móvil sin desplazarse.
  */
 export function Drawer({ open, onClose, tab, onTab, badges = {}, tabs, panels }: DrawerProps) {
   const visible = ALL_TABS.filter(({ id }) => tabs.includes(id));
   return (
     <>
-      {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={onClose} aria-hidden="true" />}
+      <div
+        className={`fixed inset-0 z-30 bg-black/40 transition-opacity ${MOTION} md:hidden ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
       <aside
         aria-label="Panel"
-        className={`fixed inset-y-0 right-0 z-40 flex w-[min(100%,26rem)] flex-col border-l border-line bg-paper shadow-xl transition-transform md:static md:z-auto md:w-96 md:shrink-0 md:shadow-none ${
-          open ? 'translate-x-0' : 'translate-x-full md:hidden'
+        aria-hidden={!open}
+        // Cerrado, el panel no recibe foco ni se lee con lector de pantalla (React 18 no conoce `inert` como propiedad: va como atributo).
+        {...(open ? {} : ({ inert: '' } as Record<string, string>))}
+        className={`fixed inset-y-0 right-0 z-40 w-[min(100%,26rem)] overflow-hidden border-l border-line bg-paper shadow-xl transition-[translate,width] ${MOTION} md:static md:z-auto md:shrink-0 md:translate-x-0 md:shadow-none ${
+          open ? 'translate-x-0 md:w-96' : 'translate-x-full md:w-0 md:border-l-0'
         }`}
       >
+        {/* El contenido mantiene siempre su ancho: lo que se anima es el hueco del panel, no se recoloca el texto mientras se abre. */}
+        <div className="flex h-full w-[min(100vw,26rem)] flex-col md:w-96">
         <div className="flex items-stretch border-b border-line">
           <div role="tablist" aria-label="Secciones" className="flex min-w-0 flex-1">
             {visible.map(({ id, label }) => {
@@ -72,10 +84,11 @@ export function Drawer({ open, onClose, tab, onTab, badges = {}, tabs, panels }:
         </div>
         <div className="min-h-0 flex-1">
           {visible.map(({ id }) => (
-            <section key={id} role="tabpanel" id={`panel-${id}`} aria-labelledby={`tab-${id}`} hidden={tab !== id} className="h-full overflow-y-auto">
+            <section key={id} role="tabpanel" id={`panel-${id}`} aria-labelledby={`tab-${id}`} hidden={tab !== id} className="h-full overflow-y-auto overscroll-contain">
               {panels[id]}
             </section>
           ))}
+        </div>
         </div>
       </aside>
     </>

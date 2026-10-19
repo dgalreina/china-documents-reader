@@ -35,6 +35,9 @@ html,
 body,
 #root {
   height: 100%;
+  /* La página no se arrastra ni rebota (como china-history): todo el scroll ocurre dentro del visor y de los paneles. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
