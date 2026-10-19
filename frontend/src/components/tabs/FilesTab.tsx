@@ -25,9 +25,11 @@ interface FilesTabProps {
   currentSlug?: string;
   onSelect: (slug: string) => void;
   onUpload: (file: File, options: { slug: string; title: string; replaceSource: boolean }) => Promise<void>;
+  /** Cierra la sesión. */
+  onSignOut?: () => void;
 }
 
-export function FilesTab({ books, currentSlug, onSelect, onUpload }: FilesTabProps) {
+export function FilesTab({ books, currentSlug, onSelect, onUpload, onSignOut }: FilesTabProps) {
   const [formOpen, setFormOpen] = useState(false);
 
   return (
@@ -68,13 +70,19 @@ export function FilesTab({ books, currentSlug, onSelect, onUpload }: FilesTabPro
                   <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[book.status]}`}>{STATUS_LABEL[book.status]}</span>
                 </div>
                 <div className="mt-1 text-xs text-stone">
-                  {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin PDF en la maqueta'}
+                  {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin datos de páginas'}
                   {book.stats && book.stats.hitos > 0 ? ` · ${book.stats.hitos} hitos · ${book.stats.personajes} personajes` : ''}
                 </div>
               </button>
             </li>
           ))}
         </ul>
+      )}
+
+      {onSignOut && (
+        <button onClick={onSignOut} className="mt-6 w-full rounded border border-line bg-white px-3 py-2 text-sm font-semibold text-stone hover:text-ink">
+          Cerrar sesión
+        </button>
       )}
     </div>
   );

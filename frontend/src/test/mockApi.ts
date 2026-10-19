@@ -1,6 +1,6 @@
 import { isValidSlug, validatePdf } from '../lib/files';
 import type { Book, BookStats, ChatMessage, Hito, Job, PageTranslation, Personaje } from '../types';
-import type { ApiClient, UploadOptions } from './client';
+import type { ApiClient, UploadOptions } from '../api/client';
 
 // ---- Datos de ejemplo ------------------------------------------------------------------------------------------------------------------
 // Los hitos y personajes del libro de muestra salen de la prueba real con el Oxford Handbook (capítulo de los Zhou), pero las PÁGINAS son
@@ -77,7 +77,9 @@ function buildSteps(batches: number): Step[] {
   return steps;
 }
 
+/** SOLO PARA TESTS: una API en memoria con datos inventados. La web publicada no la usa ni la incluye (ver src/Root.tsx). */
 export class MockApi implements ApiClient {
+  readonly features = { hitos: true, agent: true };
   private books: Book[];
   private jobs: Job[];
   private hitos = new Map<string, Hito[]>([[SAMPLE_SLUG, SAMPLE_HITOS]]);
@@ -93,7 +95,7 @@ export class MockApi implements ApiClient {
     this.books = [
       {
         slug: SAMPLE_SLUG, title: 'The Oxford Handbook of Early China (capítulo de los Zhou, muestra)', filename: 'oxford-zhou.pdf',
-        pageCount: 20, pdfUrl: '/samples/oxford-zhou.pdf', status: 'DONE', createdAt: now, stats: SAMPLE_STATS,
+        pageCount: 20, status: 'DONE', createdAt: now, stats: SAMPLE_STATS,
       },
       {
         slug: 'gernet-mundo-chino', title: 'Jacques Gernet — El mundo chino', filename: 'gernet-mundo-chino.pdf',
@@ -136,8 +138,7 @@ export class MockApi implements ApiClient {
     const job: Job = { jobId: randomId(), slug: options.slug, filename: file.name, status: 'UPLOADING', phase: 'Subiendo el PDF', progress: 0, createdAt: now };
     const book: Book = {
       slug: options.slug, title: options.title, filename: file.name, pageCount: Math.max(5, Math.round(file.size / 50_000)),
-      // El PDF recién subido se puede ver al momento (en el backend real se servirá desde S3).
-      pdfUrl: URL.createObjectURL(file), status: 'UPLOADING', createdAt: now,
+      status: 'UPLOADING', createdAt: now,
     };
     this.books = [book, ...this.books.filter((b) => b.slug !== options.slug)];
     this.jobs = [job, ...this.jobs.filter((j) => j.slug !== options.slug)];
@@ -228,6 +229,11 @@ export class MockApi implements ApiClient {
     const next = this.queue.shift();
     this.refreshQueue();
     if (next) this.run(next);
+  }
+
+  getPdfUrl(slug: string): Promise<string> {
+    if (!this.books.some((book) => book.slug === slug)) return Promise.reject(new Error('No existe ese libro.'));
+    return Promise.resolve(`/samples/${slug}.pdf`);
   }
 
   getTranslation(slug: string, page: number): Promise<PageTranslation> {

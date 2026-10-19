@@ -30,7 +30,7 @@ export function usePdfDocument(url: string | undefined): PdfState {
         setState({ doc: loaded, error: null, ratio: viewport.height / viewport.width });
       })
       .catch(() => {
-        if (!cancelled) setState({ doc: null, error: 'No se pudo abrir el PDF. Si es el de muestra, comprueba que existe frontend/public/samples/oxford-zhou.pdf.', ratio: 1.414 });
+        if (!cancelled) setState({ doc: null, error: 'No se pudo abrir el PDF. Vuelve a intentarlo; si sigue pasando, recarga la página.', ratio: 1.414 });
       });
     return () => {
       cancelled = true;

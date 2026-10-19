@@ -8,22 +8,32 @@ interface LibraryValue {
   jobs: Job[];
   /** false hasta que llega la primera respuesta: evita mostrar "no hay libros" mientras aún se está cargando. */
   loaded: boolean;
+  /** Mensaje si la última carga falló (sin conexión, sesión caducada...). null si fue bien. */
+  error: string | null;
+  reload: () => void;
   upload: (file: File, options: UploadOptions) => Promise<{ jobId: string }>;
 }
 
 const LibraryContext = createContext<LibraryValue | null>(null);
 
-/** Mantiene al día la lista de libros y de trabajos: se refresca sola cuando la API avisa de un cambio (progreso, cola, fin...). */
+/** Mantiene al día la lista de libros y de trabajos: se refresca sola cuando la API avisa de un cambio (progreso, fin...). */
 export function LibraryProvider({ api, children }: { api: ApiClient; children: ReactNode }) {
   const [books, setBooks] = useState<Book[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [nextBooks, nextJobs] = await Promise.all([api.listBooks(), api.listJobs()]);
-    setBooks(nextBooks);
-    setJobs(nextJobs);
-    setLoaded(true);
+    try {
+      const [nextBooks, nextJobs] = await Promise.all([api.listBooks(), api.listJobs()]);
+      setBooks(nextBooks);
+      setJobs(nextJobs);
+      setError(null);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : 'No se pudieron cargar tus libros.');
+    } finally {
+      setLoaded(true);
+    }
   }, [api]);
 
   useEffect(() => {
@@ -32,8 +42,8 @@ export function LibraryProvider({ api, children }: { api: ApiClient; children: R
   }, [api, refresh]);
 
   const value = useMemo<LibraryValue>(
-    () => ({ api, books, jobs, loaded, upload: (file, options) => api.startUpload(file, options) }),
-    [api, books, jobs, loaded],
+    () => ({ api, books, jobs, loaded, error, reload: () => void refresh(), upload: (file, options) => api.startUpload(file, options) }),
+    [api, books, jobs, loaded, error, refresh],
   );
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>;
 }
@@ -44,24 +54,27 @@ export function useLibrary(): LibraryValue {
   return value;
 }
 
-/** Hitos y personajes del libro abierto. Se vuelven a pedir cuando el libro termina de procesarse (su estado pasa a DONE). */
+/** Hitos y personajes del libro abierto. Solo se piden si la API los tiene; se vuelven a pedir cuando el libro termina de procesarse. */
 export function useBookData(slug: string | undefined, status: Book['status'] | undefined) {
   const { api } = useLibrary();
   const [hitos, setHitos] = useState<Hito[]>([]);
   const [personajes, setPersonajes] = useState<Personaje[]>([]);
 
   useEffect(() => {
-    if (!slug) {
+    if (!slug || !api.features.hitos) {
       setHitos([]);
       setPersonajes([]);
       return;
     }
     let cancelled = false;
-    void Promise.all([api.getHitos(slug), api.getPersonajes(slug)]).then(([nextHitos, nextPersonajes]) => {
-      if (cancelled) return;
-      setHitos(nextHitos);
-      setPersonajes(nextPersonajes);
-    });
+    void Promise.all([api.getHitos(slug), api.getPersonajes(slug)]).then(
+      ([nextHitos, nextPersonajes]) => {
+        if (cancelled) return;
+        setHitos(nextHitos);
+        setPersonajes(nextPersonajes);
+      },
+      () => undefined, // un fallo al cargar hitos no debe tumbar la pantalla: la lista queda vacía
+    );
     return () => {
       cancelled = true;
     };

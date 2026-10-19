@@ -8,15 +8,26 @@ export interface UploadOptions {
   replaceSource: boolean;
 }
 
+/** Qué partes de la interfaz tienen detrás datos reales. Lo que no, no se enseña (en vez de enseñar pestañas vacías o inventadas). */
+export interface ApiFeatures {
+  /** Pestañas Hitos y Personajes. */
+  hitos: boolean;
+  /** Pestaña Agente. */
+  agent: boolean;
+}
+
 /**
- * Todo lo que el front necesita del backend. Hay dos implementaciones: `MockApi` (datos simulados, para construir y probar la interfaz sin AWS)
- * y, más adelante, una real que llamará a API Gateway con el token del login (que se enchufará aquí, en una sola función `getToken`).
+ * Todo lo que el front necesita del backend. La implementación real es `HttpApi` (API Gateway con el token del login); la API simulada
+ * (`src/test/mockApi.ts`) solo existe para los tests y NO forma parte de la web publicada.
  */
 export interface ApiClient {
+  readonly features: ApiFeatures;
   listBooks(): Promise<Book[]>;
   listJobs(): Promise<Job[]>;
   getHitos(slug: string): Promise<Hito[]>;
   getPersonajes(slug: string): Promise<Personaje[]>;
+  /** URL temporal (firmada) desde la que el visor abre el PDF del libro. */
+  getPdfUrl(slug: string): Promise<string>;
   /** Valida, sube el PDF y arranca el análisis. Rechaza con un mensaje en español si algo no es válido. */
   startUpload(file: File, options: UploadOptions): Promise<{ jobId: string }>;
   /** Pregunta al agente. `slug` null = preguntar a todos los libros. */

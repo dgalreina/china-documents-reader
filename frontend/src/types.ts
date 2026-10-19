@@ -1,4 +1,4 @@
-// Tipos compartidos por toda la app. Reflejan lo que devolverá la API real (ver backend/lambdas/jobs y write_mongo),
+// Tipos compartidos por toda la app. Reflejan lo que devuelve la API real (ver backend/lambdas/books, jobs y store_book),
 // de modo que cambiar de la API simulada a la real no obligue a tocar las pantallas.
 
 /** Estado de un trabajo. QUEUED y UPLOADING se ven en la interfaz; el backend real solo tiene RUNNING, DONE, FAILED y NEEDS_OCR (+ UPLOADING). */
@@ -18,8 +18,6 @@ export interface Book {
   title: string;
   filename: string;
   pageCount: number;
-  /** Dirección desde la que se puede abrir el PDF. Sin ella, el visor pide abrir un archivo local. */
-  pdfUrl?: string;
   status: JobStatus;
   createdAt: string;
   stats?: BookStats;
@@ -28,14 +26,16 @@ export interface Book {
 export interface Job {
   jobId: string;
   slug: string;
+  /** Título que se puso al subir (puede faltar en trabajos antiguos). */
+  title?: string;
   filename: string;
   status: JobStatus;
   /** Texto de la fase actual, p. ej. "Etiquetando y calculando embeddings". */
   phase: string;
   /** Avance de la fase actual, p. ej. "8 de 22 tandas". */
   detail?: string;
-  /** 0 a 1: avance global del trabajo (o de la subida mientras está en UPLOADING). */
-  progress: number;
+  /** 0 a 1: avance global del trabajo (o de la subida mientras está en UPLOADING). null = no se sabe (el backend aún no informa del avance del análisis). */
+  progress: number | null;
   /** Posición en la cola si está en QUEUED (1 = el siguiente). */
   queuePosition?: number;
   error?: string;

@@ -12,7 +12,7 @@ const ACTIVE = new Set(['UPLOADING', 'QUEUED', 'RUNNING']);
 export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
   const active = jobs.filter((job) => ACTIVE.has(job.status));
   const finished = jobs.filter((job) => !ACTIVE.has(job.status));
-  const titleOf = (slug: string) => books.find((book) => book.slug === slug)?.title ?? slug;
+  const titleOf = (job: Job) => job.title ?? books.find((book) => book.slug === job.slug)?.title ?? job.slug;
 
   if (jobs.length === 0) return <p className="p-6 text-center text-sm text-stone">No hay análisis en marcha. Sube un PDF desde la pestaña Archivos.</p>;
 
@@ -23,7 +23,7 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone">En marcha</h3>
           <ul className="space-y-2">
             {active.map((job) => (
-              <JobCard key={job.jobId} job={job} title={titleOf(job.slug)} onSelect={onSelect} />
+              <JobCard key={job.jobId} job={job} title={titleOf(job)} onSelect={onSelect} />
             ))}
           </ul>
         </section>
@@ -33,7 +33,7 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone">Terminados</h3>
           <ul className="space-y-2">
             {finished.map((job) => (
-              <JobCard key={job.jobId} job={job} title={titleOf(job.slug)} onSelect={onSelect} />
+              <JobCard key={job.jobId} job={job} title={titleOf(job)} onSelect={onSelect} />
             ))}
           </ul>
         </section>
@@ -58,16 +58,24 @@ function JobCard({ job, title, onSelect }: { job: Job; title: string; onSelect: 
             {job.phase}
             {job.detail ? ` · ${job.detail}` : ''}
           </p>
-          <div
-            role="progressbar"
-            aria-valuenow={Math.round(job.progress * 100)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            className="mt-2 h-2 overflow-hidden rounded bg-paper-dark"
-          >
-            <div className="h-full bg-seal transition-all" style={{ width: formatPercent(job.progress) }} />
-          </div>
-          <p className="mt-1 text-right text-xs text-stone">{formatPercent(job.progress)}</p>
+          {job.progress === null ? (
+            <div role="progressbar" aria-label="Analizando" className="mt-2 h-2 overflow-hidden rounded bg-paper-dark">
+              <div className="h-full w-1/3 animate-pulse bg-seal" />
+            </div>
+          ) : (
+            <>
+              <div
+                role="progressbar"
+                aria-valuenow={Math.round(job.progress * 100)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="mt-2 h-2 overflow-hidden rounded bg-paper-dark"
+              >
+                <div className="h-full bg-seal transition-all" style={{ width: formatPercent(job.progress) }} />
+              </div>
+              <p className="mt-1 text-right text-xs text-stone">{formatPercent(job.progress)}</p>
+            </>
+          )}
         </>
       )}
 

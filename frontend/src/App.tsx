@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { api } from './api';
+import type { ApiClient } from './api/client';
 import { Drawer } from './components/Drawer';
 import { PdfGate } from './components/PdfGate';
 import { PdfViewer } from './components/PdfViewer';
@@ -13,14 +13,20 @@ import { ProgressTab } from './components/tabs/ProgressTab';
 import { LibraryProvider, useBookData, useLibrary } from './state/Library';
 import { useTranslations } from './state/Translations';
 import { usePdfDocument } from './state/usePdfDocument';
+import { usePdfUrl } from './state/usePdfUrl';
 import type { JumpTarget, ReadMode, TabId } from './types';
 
-export default function App() {
+interface AppProps {
+  api: ApiClient;
+  onSignOut: () => void;
+}
+
+export default function App({ api, onSignOut }: AppProps) {
   return (
     <LibraryProvider api={api}>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/libros/:slug" element={<Workspace />} />
+        <Route path="/" element={<Home onSignOut={onSignOut} />} />
+        <Route path="/libros/:slug" element={<Workspace onSignOut={onSignOut} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </LibraryProvider>
@@ -28,11 +34,11 @@ export default function App() {
 }
 
 /** La raíz lleva al primer libro (o enseña la pantalla vacía si aún no hay ninguno). */
-function Home() {
+function Home({ onSignOut }: { onSignOut: () => void }) {
   const { books, loaded } = useLibrary();
   if (!loaded) return <div className="flex h-full items-center justify-center text-stone">Cargando…</div>;
-  const first = books.find((book) => book.status === 'DONE') ?? books[0];
-  return first ? <Navigate to={`/libros/${first.slug}`} replace /> : <Workspace />;
+  const first = books[0]; // la lista llega ordenada: el más reciente primero
+  return first ? <Navigate to={`/libros/${first.slug}`} replace /> : <Workspace onSignOut={onSignOut} />;
 }
 
 const isDesktop = () => window.matchMedia('(min-width: 768px)').matches;
@@ -47,27 +53,31 @@ const loadMode = (): ReadMode => {
   }
 };
 
-function Workspace() {
+const Message = ({ children }: { children: React.ReactNode }) => <div className="flex h-full items-center justify-center p-6 text-center text-stone">{children}</div>;
+
+function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { api: client, books, jobs, upload } = useLibrary();
+  const { api: client, books, jobs, loaded, error, reload, upload } = useLibrary();
   const book = books.find((candidate) => candidate.slug === slug);
+  const pendingJob = !book && slug ? jobs.find((job) => job.slug === slug) : undefined;
 
   // En ordenador el panel empieza abierto; en móvil, cerrado para que el PDF ocupe toda la pantalla.
   const [drawerOpen, setDrawerOpen] = useState(isDesktop);
-  const [tab, setTab] = useState<TabId>('hitos');
+  const [tab, setTab] = useState<TabId>('archivos');
   const [currentPage, setCurrentPage] = useState(1);
   const [target, setTarget] = useState<JumpTarget | null>(null);
   const [mode, setMode] = useState<ReadMode>(loadMode);
-  // PDF abierto desde el ordenador para un libro que no tiene PDF propio en la maqueta.
-  const [localPdf, setLocalPdf] = useState<{ slug: string; url: string } | null>(null);
 
   const { hitos, personajes } = useBookData(book?.slug, book?.status);
-  const pdfUrl = book?.pdfUrl ?? (localPdf && localPdf.slug === slug ? localPdf.url : undefined);
+  const { url: pdfUrl, error: pdfError } = usePdfUrl(client, book?.status === 'DONE' ? book.slug : undefined);
   const pdf = usePdfDocument(pdfUrl);
   const pageCount = pdf.doc?.numPages ?? 0;
   const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null);
   const activeJobs = jobs.filter((job) => job.status === 'UPLOADING' || job.status === 'QUEUED' || job.status === 'RUNNING').length;
+
+  // Solo las pestañas que tienen datos reales detrás.
+  const tabs: TabId[] = ['archivos', 'progreso', ...(client.features.hitos ? (['hitos', 'personajes'] as const) : []), ...(client.features.agent ? (['agente'] as const) : [])];
 
   const goToPage = (page: number) => {
     setTarget({ page, nonce: Date.now() });
@@ -119,12 +129,21 @@ function Workspace() {
         </button>
       </header>
 
+      {error && (
+        <div role="alert" className="flex items-center gap-3 border-b border-line bg-red-50 px-4 py-2 text-sm text-red-800">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button onClick={reload} className="shrink-0 rounded border border-red-300 bg-white px-2 py-1 font-semibold">
+            Reintentar
+          </button>
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1">
-          {slug && !book ? (
-            <div className="flex h-full items-center justify-center p-6 text-center text-stone">No existe el libro «{slug}».</div>
+          {!loaded ? (
+            <Message>Cargando…</Message>
           ) : book ? (
-            <PdfGate url={pdfUrl} pdf={pdf} onPickLocal={(file) => setLocalPdf({ slug: book.slug, url: URL.createObjectURL(file) })}>
+            <PdfGate url={pdfUrl} urlError={pdfError} pdf={pdf}>
               {(doc) =>
                 mode === 'es' ? (
                   <ReaderView key={pdfUrl} doc={doc} translations={translations} target={target} onPageChange={setCurrentPage} />
@@ -133,8 +152,14 @@ function Workspace() {
                 )
               }
             </PdfGate>
+          ) : pendingJob ? (
+            <Message>
+              «{pendingJob.title ?? pendingJob.slug}» todavía se está procesando. Puedes seguir su avance en la pestaña Progreso; cuando termine aparecerá aquí.
+            </Message>
+          ) : slug ? (
+            <Message>No existe el libro «{slug}».</Message>
           ) : (
-            <div className="flex h-full items-center justify-center p-6 text-center text-stone">No hay ningún libro. Abre el panel y sube un PDF.</div>
+            <Message>Todavía no hay ningún libro. Abre el panel y sube un PDF.</Message>
           )}
         </main>
 
@@ -144,15 +169,16 @@ function Workspace() {
           tab={tab}
           onTab={setTab}
           badges={{ progreso: activeJobs }}
+          tabs={tabs}
           panels={{
             archivos: (
               <FilesTab
                 books={books}
                 currentSlug={book?.slug}
                 onSelect={select}
+                onSignOut={onSignOut}
                 onUpload={async (file, options) => {
                   await upload(file, options);
-                  select(options.slug);
                   setTab('progreso'); // nada más subir, lo que interesa es ver cómo avanza
                 }}
               />

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { TabId } from '../types';
 
-export const TABS: { id: TabId; label: string }[] = [
+export const ALL_TABS: { id: TabId; label: string }[] = [
   { id: 'archivos', label: 'Archivos' },
   { id: 'progreso', label: 'Progreso' },
   { id: 'hitos', label: 'Hitos' },
@@ -16,15 +16,18 @@ interface DrawerProps {
   onTab: (tab: TabId) => void;
   /** Número que se enseña junto a una pestaña (p. ej. los trabajos activos en "Progreso"). */
   badges?: Partial<Record<TabId, number>>;
+  /** Las pestañas que se enseñan (las que no tienen datos reales detrás no aparecen). */
+  tabs: TabId[];
   /** Un panel por pestaña. Todos se mantienen montados (solo se ocultan) para que no se pierda lo escrito al cambiar de pestaña. */
-  panels: Record<TabId, ReactNode>;
+  panels: Partial<Record<TabId, ReactNode>>;
 }
 
 /**
  * El panel de pestañas. En ordenador es una columna a la derecha del PDF que se pliega; en móvil se desliza por encima del PDF
  * ocupando casi todo el ancho, con una capa oscura detrás que lo cierra al tocarla.
  */
-export function Drawer({ open, onClose, tab, onTab, badges = {}, panels }: DrawerProps) {
+export function Drawer({ open, onClose, tab, onTab, badges = {}, tabs, panels }: DrawerProps) {
+  const visible = ALL_TABS.filter(({ id }) => tabs.includes(id));
   return (
     <>
       {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={onClose} aria-hidden="true" />}
@@ -36,7 +39,7 @@ export function Drawer({ open, onClose, tab, onTab, badges = {}, panels }: Drawe
       >
         <div className="flex items-center border-b border-line">
           <div role="tablist" aria-label="Secciones" className="flex min-w-0 flex-1 overflow-x-auto">
-            {TABS.map(({ id, label }) => (
+            {visible.map(({ id, label }) => (
               <button
                 key={id}
                 role="tab"
@@ -58,7 +61,7 @@ export function Drawer({ open, onClose, tab, onTab, badges = {}, panels }: Drawe
           </button>
         </div>
         <div className="min-h-0 flex-1">
-          {TABS.map(({ id }) => (
+          {visible.map(({ id }) => (
             <section key={id} role="tabpanel" id={`panel-${id}`} aria-labelledby={`tab-${id}`} hidden={tab !== id} className="h-full overflow-y-auto">
               {panels[id]}
             </section>

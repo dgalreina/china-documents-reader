@@ -47,8 +47,9 @@ describe('subida y análisis', () => {
       await vi.advanceTimersByTimeAsync(10);
       const j = await job('libro-nuevo');
       if (j.status === 'RUNNING') {
-        expect(j.progress).toBeGreaterThanOrEqual(last);
-        last = j.progress;
+        expect(j.progress).not.toBeNull();
+        expect(j.progress!).toBeGreaterThanOrEqual(last);
+        last = j.progress!;
         if (phases[phases.length - 1] !== j.phase) phases.push(j.phase);
       }
     }
