@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import type { ApiClient } from './api/client';
 import { Drawer } from './components/Drawer';
+import { ChevronIcon } from './components/icons';
 import { PdfGate } from './components/PdfGate';
 import { PdfViewer } from './components/PdfViewer';
 import { ReaderView } from './components/ReaderView';
@@ -10,6 +11,7 @@ import { FilesTab } from './components/tabs/FilesTab';
 import { HitosTab } from './components/tabs/HitosTab';
 import { PersonajesTab } from './components/tabs/PersonajesTab';
 import { ProgressTab } from './components/tabs/ProgressTab';
+import { HEADER_HEIGHT } from './lib/layout';
 import { LibraryProvider, useBookData, useLibrary } from './state/Library';
 import { useTranslations } from './state/Translations';
 import { usePdfDocument } from './state/usePdfDocument';
@@ -62,8 +64,8 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const book = books.find((candidate) => candidate.slug === slug);
   const pendingJob = !book && slug ? jobs.find((job) => job.slug === slug) : undefined;
 
-  // En ordenador el panel empieza abierto; en móvil, cerrado para que el PDF ocupe toda la pantalla.
-  const [drawerOpen, setDrawerOpen] = useState(isDesktop);
+  // El panel empieza cerrado (el PDF ocupa todo el ancho) y lo abre el usuario con la lengüeta del borde derecho.
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [tab, setTab] = useState<TabId>('archivos');
   const [currentPage, setCurrentPage] = useState(1);
   const [target, setTarget] = useState<JumpTarget | null>(null);
@@ -101,45 +103,62 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-line bg-paper px-4 py-2">
-        <h1 className="min-w-0 flex-1 truncate font-brush text-lg font-bold">{book ? book.title : 'Document Reader'}</h1>
-        {book && pdfUrl && (
-          <div className="flex shrink-0 overflow-hidden rounded border border-line text-sm font-semibold" role="group" aria-label="Modo de lectura">
-            {(['original', 'es'] as const).map((value) => (
-              <button
-                key={value}
-                onClick={() => changeMode(value)}
-                aria-pressed={mode === value}
-                className={`px-3 py-1.5 ${mode === value ? 'bg-seal text-on-seal' : 'bg-white text-stone hover:text-ink'}`}
-              >
-                {value === 'original' ? 'Original' : 'Español'}
-              </button>
-            ))}
+    <div className="flex h-full">
+      {/* Columna de lectura. La cabecera y los controles FLOTAN encima del visor: al hacer scroll, el PDF se ve por detrás de la cabecera translúcida. */}
+      <div className="relative min-w-0 flex-1">
+        <header
+          className="absolute inset-x-0 top-0 z-20 flex items-center border-b border-ink/10 bg-paper/80 px-4 backdrop-blur"
+          style={{ height: HEADER_HEIGHT }}
+        >
+          <h1 className="min-w-0 flex-1 truncate text-center font-brush text-lg font-bold">{book ? book.title : 'Document Reader'}</h1>
+        </header>
+
+        {error && (
+          <div role="alert" className="absolute inset-x-0 z-10 flex items-center gap-3 border-b border-line bg-red-50/95 px-4 py-2 text-sm text-red-800" style={{ top: HEADER_HEIGHT }}>
+            <span className="min-w-0 flex-1">{error}</span>
+            <button onClick={reload} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-semibold">
+              Reintentar
+            </button>
           </div>
         )}
-        {book && pdfUrl && pageCount > 0 && <span className="hidden shrink-0 text-sm text-stone sm:inline">Pág. {currentPage} / {pageCount}</span>}
-        <button
-          onClick={() => setDrawerOpen((open) => !open)}
-          aria-expanded={drawerOpen}
-          className="relative shrink-0 rounded border border-line bg-white px-3 py-1.5 text-sm font-semibold hover:border-seal"
-        >
-          {drawerOpen ? 'Ocultar panel' : 'Panel'}
-          {!drawerOpen && activeJobs > 0 && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-seal" aria-label="Hay análisis en marcha" />}
-        </button>
-      </header>
 
-      {error && (
-        <div role="alert" className="flex items-center gap-3 border-b border-line bg-red-50 px-4 py-2 text-sm text-red-800">
-          <span className="min-w-0 flex-1">{error}</span>
-          <button onClick={reload} className="shrink-0 rounded border border-red-300 bg-white px-2 py-1 font-semibold">
-            Reintentar
+        {/* Original / Español, pequeño y en la esquina, como los selectores de china-history; con la página en la que estás. */}
+        {book && pdfUrl && (
+          <div className="absolute right-3 z-10 flex items-center gap-2 md:right-5" style={{ top: HEADER_HEIGHT + 8 + (error ? 44 : 0) }}>
+            {pageCount > 0 && (
+              <span className="rounded-lg border border-ink/10 bg-paper/80 px-2 py-1 text-xs tabular-nums text-stone shadow-sm backdrop-blur">
+                {currentPage} / {pageCount}
+              </span>
+            )}
+            <div role="group" aria-label="Modo de lectura" className="flex rounded-lg border border-ink/10 bg-paper/80 p-0.5 shadow-sm backdrop-blur">
+              {(['original', 'es'] as const).map((value) => (
+                <button
+                  key={value}
+                  onClick={() => changeMode(value)}
+                  aria-pressed={mode === value}
+                  className={`rounded-md px-2.5 py-1 text-xs font-semibold ${mode === value ? 'bg-ink text-paper' : 'text-ink-soft hover:text-ink'}`}
+                >
+                  {value === 'original' ? 'Original' : 'Español'}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* La lengüeta que abre el panel. En ordenador queda junto a la barra de scroll del PDF para no taparla. */}
+        {!drawerOpen && (
+          <button
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Abrir el panel"
+            aria-expanded={false}
+            className="absolute right-0 top-1/2 z-10 flex h-16 w-6 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-ink/15 bg-ink/55 text-paper backdrop-blur-sm hover:bg-ink/70 md:right-4 md:rounded-lg md:border-r"
+          >
+            <ChevronIcon direction="left" />
+            {activeJobs > 0 && <span className="absolute -left-1 -top-1 h-3 w-3 rounded-full bg-seal ring-2 ring-paper" aria-label="Hay análisis en marcha" />}
           </button>
-        </div>
-      )}
+        )}
 
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
+        <main className="h-full">
           {!loaded ? (
             <Message>Cargando…</Message>
           ) : book ? (
@@ -160,9 +179,10 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             // Una dirección vieja o mal escrita: al inicio, que lleva al libro más reciente o a la pantalla vacía.
             <Navigate to="/" replace />
           ) : (
-            <Message>Todavía no hay ningún libro. Abre el panel y sube un PDF.</Message>
+            <Message>Todavía no hay ningún libro. Abre el panel con la lengüeta del borde derecho y sube un PDF.</Message>
           )}
         </main>
+      </div>
 
         <Drawer
           open={drawerOpen}
@@ -190,7 +210,6 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             agente: <AgentTab api={client} slug={book?.slug ?? null} onGoToPage={goToPage} />,
           }}
         />
-      </div>
     </div>
   );
 }

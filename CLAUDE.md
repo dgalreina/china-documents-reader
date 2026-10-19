@@ -200,6 +200,8 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   del Oxford buscando la cita en el PDF) y `evidencia` (la frase del libro, max. 500). Campos extra opcionales: china-history los ignora (avisar a su agente; `book_chunks`
   tambien lleva ahora `paragraphPages`). Lambda `read_hitos` (`GET /books/{slug}/hitos` y `/personajes`, solo lectura, filtra por `origen` y por libro, tope 500)
   y pestañas Hitos/Personajes con datos reales. Los hitos ya guardados antes (`oxford-test`, `oxford-prueba`) NO tienen pagina hasta reprocesar el libro.
+  **Estilo (v2):** cabecera translucida que FLOTA sobre el visor (solo el titulo; HEADER_HEIGHT en lib/layout.ts), pildora Original/Español + pagina arriba a la derecha, panel cerrado
+  por defecto con una lengueta en el borde derecho (en PC EMPUJA al PDF, en movil se superpone), pestañas del panel arriba con icono y texto debajo. Pendiente: portadas (1a pagina del PDF).
   **Identidad visual:** acento ROJO ZHOU `#8e1b1b` (seal-dark `#6c1212`, texto `#f6efe4`), el mismo del portfolio; el verde Shang es el de china-history. 'Listo'/'Analizando'
   van en neutro (tinta) para no confundirse con 'Error'. El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
 

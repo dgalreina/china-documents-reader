@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { HEADER_HEIGHT } from '../lib/layout';
 import { DWELL_MS, ENGLISH_WINDOW, joinLines, pagesToLoad, splitCjk, splitParagraphs } from '../lib/translation';
 import { getPageText } from '../state/usePdfDocument';
 import type { Translations } from '../state/Translations';
@@ -115,14 +116,14 @@ export function ReaderView({ doc, translations, target, onPageChange }: ReaderVi
     const page = Math.min(doc.numPages, Math.max(1, target.page));
     const element = listRef.current?.children[page - 1] as HTMLElement | undefined;
     if (!element) return;
-    scrollRef.current?.scrollTo({ top: element.offsetTop, behavior: 'auto' });
+    scrollRef.current?.scrollTo({ top: element.offsetTop - HEADER_HEIGHT, behavior: 'auto' }); // la página queda justo debajo de la cabecera
     const jumped = saveAnchor(); // ya, sin esperar al evento de scroll: si llegara contenido antes, recolocaría con el ancla vieja
     if (jumped) setCurrent(jumped);
   }, [target, doc]);
 
   return (
     <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto bg-paper-dark" style={{ overflowAnchor: 'none' }} data-testid="reader-scroll">
-      <div ref={listRef} className="relative mx-auto max-w-[44rem] bg-paper">
+      <div ref={listRef} className="relative mx-auto max-w-[44rem] bg-paper" style={{ paddingTop: HEADER_HEIGHT }}>
         {Array.from({ length: doc.numPages }, (_, index) => {
           const page = index + 1;
           return (

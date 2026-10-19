@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { HEADER_HEIGHT } from '../lib/layout';
 import type { JumpTarget } from '../types';
 
 const PAGE_GAP = 16; // px entre páginas
@@ -47,10 +48,13 @@ export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) 
   const updateRange = () => {
     const element = scrollRef.current;
     if (!element || !doc || slot <= PAGE_GAP) return;
-    const first = Math.max(1, Math.floor(element.scrollTop / slot) + 1);
-    const last = Math.min(doc.numPages, Math.floor((element.scrollTop + element.clientHeight) / slot) + 1);
+    // La primera página empieza HEADER_HEIGHT + PAGE_GAP más abajo del borde superior del contenido (hueco de la cabecera flotante).
+    const top = element.scrollTop - HEADER_HEIGHT;
+    const first = Math.max(1, Math.floor(top / slot) + 1);
+    const last = Math.min(doc.numPages, Math.floor((top + element.clientHeight) / slot) + 1);
     setRange((previous) => (previous.first === first && previous.last === last ? previous : { first, last }));
-    const current = Math.min(doc.numPages, Math.max(1, Math.floor((element.scrollTop + element.clientHeight * 0.3) / slot) + 1));
+    const line = element.scrollTop + element.clientHeight * 0.3 - HEADER_HEIGHT - PAGE_GAP; // la línea al 30 % de lo visible, medida desde la primera página
+    const current = Math.min(doc.numPages, Math.max(1, Math.floor(line / slot) + 1));
     if (current !== lastReportedPage.current) {
       lastReportedPage.current = current;
       callbacks.current.onPageChange(current);
@@ -70,7 +74,7 @@ export function PdfViewer({ doc, ratio, target, onPageChange }: PdfViewerProps) 
 
   return (
     <div ref={scrollRef} onScroll={updateRange} className="h-full overflow-y-auto bg-paper-dark" data-testid="pdf-scroll">
-      <div style={{ padding: `${PAGE_GAP}px ${SIDE_PADDING}px`, width: pageWidth + SIDE_PADDING * 2, margin: '0 auto' }}>
+      <div style={{ padding: `${HEADER_HEIGHT + PAGE_GAP}px ${SIDE_PADDING}px ${PAGE_GAP}px`, width: pageWidth + SIDE_PADDING * 2, margin: '0 auto' }}>
         {Array.from({ length: doc.numPages }, (_, index) => {
           const pageNumber = index + 1;
           const active = pageNumber >= range.first - BUFFER_PAGES && pageNumber <= range.last + BUFFER_PAGES;
