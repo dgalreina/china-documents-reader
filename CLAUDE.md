@@ -199,6 +199,13 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
 
 ## Ideas apuntadas (sin implementar)
 
+- **Libros escaneados / imagenes sueltas (para el FINAL, decidido con el usuario):** hoy un PDF sin texto acaba en `NEEDS_OCR`. Un solo paso de OCR por paginas
+  (en paralelo, como el etiquetado) resolveria PDFs escaneados e imagenes sueltas: su texto por pagina entraria en el flujo en lugar del de pypdf, y la traduccion y el
+  lector usarian ese texto cuando el PDF no tenga capa de texto. Opciones: Textract (~1,5 USD/1000 pags., pero creo que NO lee chino: verificar), Tesseract (gratis,
+  peor con fotos) o vision de OpenAI (`gpt-4o`, ~0,01-0,015 USD/pag., lee chino; recomendada). Las imagenes se unirian en un PDF (Pillow) para que el visor no cambie;
+  la web necesitaria elegir varias fotos, ORDENARLAS (el orden de subida es la numeracion de paginas) y subirlas. Un libro de 800 pags. pasaria de ~8 a ~18 USD.
+  Fotos torcidas, con sombras o con dos paginas por foto dan peor OCR. Preguntas abiertas: fotos de movil o escaner, con o sin caracteres chinos, cuantas paginas.
+
 - **Tope de amplitud del rango de anios (HECHO):** un rango de mas de `MAX_SPAN_YEARS` (2000 por defecto, configurable por entorno) va a
   pendientes con motivo `rango_demasiado_ancho` y no se pagan sus embeddings. Motivo: en la prueba con el Oxford Handbook 7 de 68 chunks
   tenian 3000-5050 anios (introducciones de capitulo: es el alcance del capitulo, no del fragmento) y metian ruido; el filtro anterior

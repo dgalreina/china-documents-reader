@@ -157,7 +157,8 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
               «{pendingJob.title ?? pendingJob.slug}» todavía se está procesando. Puedes seguir su avance en la pestaña Progreso; cuando termine aparecerá aquí.
             </Message>
           ) : slug ? (
-            <Message>No existe el libro «{slug}».</Message>
+            // Una dirección vieja o mal escrita: al inicio, que lleva al libro más reciente o a la pantalla vacía.
+            <Navigate to="/" replace />
           ) : (
             <Message>Todavía no hay ningún libro. Abre el panel y sube un PDF.</Message>
           )}
