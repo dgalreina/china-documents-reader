@@ -28,6 +28,7 @@ export function LoginScreen({ onSubmit }: LoginScreenProps) {
   return (
     <main className="flex h-full items-center justify-center overflow-y-auto p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded border border-line bg-white p-6 shadow-sm">
+        <img src="/icon-192.png" alt="" width={56} height={56} className="rounded-xl shadow-sm" />
         <h1 className="font-brush text-2xl font-bold">China Documents Reader</h1>
         <p className="text-sm text-stone">Entra para ver y subir tus libros.</p>
 
@@ -63,7 +64,7 @@ export function LoginScreen({ onSubmit }: LoginScreenProps) {
             {error}
           </p>
         )}
-        <button disabled={busy || !email || !password} className="w-full rounded bg-seal px-4 py-2 font-semibold text-white hover:bg-seal-dark disabled:opacity-40">
+        <button disabled={busy || !email || !password} className="w-full rounded bg-seal px-4 py-2 font-semibold text-on-seal hover:bg-seal-dark disabled:opacity-40">
           {busy ? 'Entrando…' : 'Entrar'}
         </button>
       </form>
