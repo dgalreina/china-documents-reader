@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import type { ApiClient } from './api/client';
+import { AnalyzeDialog } from './components/AnalyzeDialog';
 import { Drawer } from './components/Drawer';
+import { CenteredSpinner, LoadingShell } from './components/Spinner';
 import { ChevronIcon } from './components/icons';
 import { PdfGate } from './components/PdfGate';
 import { PdfViewer } from './components/PdfViewer';
@@ -11,12 +13,13 @@ import { FilesTab } from './components/tabs/FilesTab';
 import { HitosTab } from './components/tabs/HitosTab';
 import { PersonajesTab } from './components/tabs/PersonajesTab';
 import { ProgressTab } from './components/tabs/ProgressTab';
+import { analysisState } from './lib/analysis';
 import { HEADER_HEIGHT } from './lib/layout';
 import { LibraryProvider, useBookData, useLibrary } from './state/Library';
 import { useTranslations } from './state/Translations';
-import { usePdfDocument } from './state/usePdfDocument';
+import { loadPdfjs, usePdfDocument } from './state/usePdfDocument';
 import { usePdfUrl } from './state/usePdfUrl';
-import type { JumpTarget, ReadMode, TabId } from './types';
+import type { Book, JumpTarget, ReadMode, TabId } from './types';
 
 interface AppProps {
   api: ApiClient;
@@ -24,6 +27,11 @@ interface AppProps {
 }
 
 export default function App({ api, onSignOut }: AppProps) {
+  // pdf.js empieza a descargarse ya, mientras se carga la lista de libros: cuando se abra uno, ya estará (o casi).
+  useEffect(() => {
+    void loadPdfjs().catch(() => undefined);
+  }, []);
+
   return (
     <LibraryProvider api={api}>
       <Routes>
@@ -38,7 +46,7 @@ export default function App({ api, onSignOut }: AppProps) {
 /** La raíz lleva al primer libro (o enseña la pantalla vacía si aún no hay ninguno). */
 function Home({ onSignOut }: { onSignOut: () => void }) {
   const { books, loaded } = useLibrary();
-  if (!loaded) return <div className="flex h-full items-center justify-center text-stone">Cargando…</div>;
+  if (!loaded) return <LoadingShell />;
   const first = books[0]; // la lista llega ordenada: el más reciente primero
   return first ? <Navigate to={`/libros/${first.slug}`} replace /> : <Workspace onSignOut={onSignOut} />;
 }
@@ -60,7 +68,7 @@ const Message = ({ children }: { children: React.ReactNode }) => <div className=
 function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { api: client, books, jobs, loaded, error, reload, upload, remove } = useLibrary();
+  const { api: client, books, jobs, loaded, error, reload, upload, analyze, remove } = useLibrary();
   const book = books.find((candidate) => candidate.slug === slug);
   const pendingJob = !book && slug ? jobs.find((job) => job.slug === slug) : undefined;
 
@@ -70,9 +78,12 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [target, setTarget] = useState<JumpTarget | null>(null);
   const [mode, setMode] = useState<ReadMode>(loadMode);
+  const [analyzing, setAnalyzing] = useState<Book | null>(null); // el libro cuyo análisis se está a punto de pedir (se confirma el coste antes)
 
-  const { hitos, personajes } = useBookData(book?.slug, book?.status);
-  const { url: pdfUrl, error: pdfError } = usePdfUrl(client, book?.status === 'DONE' ? book.slug : undefined);
+  // Los hitos se vuelven a pedir cuando el libro cambia (p. ej. al terminar un análisis).
+  const { hitos, personajes } = useBookData(book?.slug, book ? `${book.analysis}:${book.updatedAt ?? ''}` : undefined);
+  const { url: pdfUrl, error: pdfError } = usePdfUrl(client, book?.slug); // un libro del catálogo siempre tiene su PDF, analizado o no
+  const analysis = book ? analysisState(book, jobs) : null;
   const pdf = usePdfDocument(pdfUrl);
   const pageCount = pdf.doc?.numPages ?? 0;
   const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null);
@@ -160,7 +171,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
 
         <main className="h-full">
           {!loaded ? (
-            <Message>Cargando…</Message>
+            <CenteredSpinner />
           ) : book ? (
             <PdfGate url={pdfUrl} urlError={pdfError} pdf={pdf}>
               {(doc) =>
@@ -173,7 +184,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             </PdfGate>
           ) : pendingJob ? (
             <Message>
-              «{pendingJob.title ?? pendingJob.slug}» todavía se está procesando. Puedes seguir su avance en la pestaña Progreso; cuando termine aparecerá aquí.
+              «{pendingJob.title ?? pendingJob.slug}» todavía se está subiendo o preparando. Puedes seguir su avance en la pestaña Progreso; cuando termine aparecerá aquí.
             </Message>
           ) : slug ? (
             // Una dirección vieja o mal escrita: al inicio, que lleva al libro más reciente o a la pantalla vacía.
@@ -195,6 +206,8 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             archivos: (
               <FilesTab
                 books={books}
+                jobs={jobs}
+                onAnalyze={setAnalyzing}
                 currentSlug={book?.slug}
                 onSelect={select}
                 onSignOut={onSignOut}
@@ -209,11 +222,12 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
               />
             ),
             progreso: <ProgressTab jobs={jobs} books={books} onSelect={select} />,
-            hitos: <HitosTab hitos={hitos} currentPage={currentPage} onGoToPage={goToPage} />,
-            personajes: <PersonajesTab personajes={personajes} hitos={hitos} onGoToPage={goToPage} />,
+            hitos: <HitosTab hitos={hitos} currentPage={currentPage} onGoToPage={goToPage} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />,
+            personajes: <PersonajesTab personajes={personajes} hitos={hitos} onGoToPage={goToPage} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />,
             agente: <AgentTab api={client} slug={book?.slug ?? null} onGoToPage={goToPage} />,
           }}
         />
+      {analyzing && <AnalyzeDialog book={analyzing} jobs={jobs} onConfirm={analyze} onClose={() => setAnalyzing(null)} />}
     </div>
   );
 }

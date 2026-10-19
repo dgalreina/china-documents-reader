@@ -12,6 +12,8 @@ interface LibraryValue {
   error: string | null;
   reload: () => void;
   upload: (file: File, options: UploadOptions) => Promise<{ jobId: string }>;
+  /** Arranca el análisis de un libro y refresca la lista. */
+  analyze: (slug: string) => Promise<void>;
   /** Borra un libro con todo lo suyo y refresca la lista. */
   remove: (slug: string) => Promise<void>;
 }
@@ -52,6 +54,10 @@ export function LibraryProvider({ api, children }: { api: ApiClient; children: R
       error,
       reload: () => void refresh(),
       upload: (file, options) => api.startUpload(file, options),
+      analyze: async (slug) => {
+        await api.analyzeBook(slug);
+        await refresh();
+      },
       remove: async (slug) => {
         await api.deleteBook(slug);
         await refresh();
@@ -68,8 +74,8 @@ export function useLibrary(): LibraryValue {
   return value;
 }
 
-/** Hitos y personajes del libro abierto. Solo se piden si la API los tiene; se vuelven a pedir cuando el libro termina de procesarse. */
-export function useBookData(slug: string | undefined, status: Book['status'] | undefined) {
+/** Hitos y personajes del libro abierto. Solo se piden si la API los tiene; se vuelven a pedir cuando cambia `version` (p. ej. al terminar un análisis). */
+export function useBookData(slug: string | undefined, version: string | undefined) {
   const { api } = useLibrary();
   const [hitos, setHitos] = useState<Hito[]>([]);
   const [personajes, setPersonajes] = useState<Personaje[]>([]);
@@ -92,7 +98,7 @@ export function useBookData(slug: string | undefined, status: Book['status'] | u
     return () => {
       cancelled = true;
     };
-  }, [api, slug, status === 'DONE']);
+  }, [api, slug, version]);
 
   return { hitos, personajes };
 }

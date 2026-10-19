@@ -1,16 +1,21 @@
 import { useMemo, useState } from 'react';
 import { formatYear } from '../../lib/format';
+import type { AnalysisState } from '../../lib/analysis';
 import type { Hito } from '../../types';
+import { AnalysisNotice } from '../AnalysisNotice';
 
 interface HitosTabProps {
   hitos: Hito[];
   currentPage: number;
   onGoToPage: (page: number) => void;
+  /** Estado del análisis del libro abierto, para explicar por qué no hay hitos y ofrecer analizarlo. */
+  analysis?: AnalysisState | null;
+  onAnalyze?: () => void;
 }
 
 type Order = 'pagina' | 'año';
 
-export function HitosTab({ hitos, currentPage, onGoToPage }: HitosTabProps) {
+export function HitosTab({ hitos, currentPage, onGoToPage, analysis = null, onAnalyze }: HitosTabProps) {
   const [order, setOrder] = useState<Order>('pagina');
 
   // Los hitos de libros procesados antes de guardar la página no la tienen: si ninguno la trae, "por página" se queda en por año.
@@ -20,7 +25,7 @@ export function HitosTab({ hitos, currentPage, onGoToPage }: HitosTabProps) {
     [hitos, order, hasPages],
   );
 
-  if (hitos.length === 0) return <p className="p-6 text-center text-sm text-stone">Este libro aún no tiene hitos.</p>;
+  if (hitos.length === 0) return <AnalysisNotice what="hitos" analysis={analysis} onAnalyze={onAnalyze} />;
 
   return (
     <div className="p-3">

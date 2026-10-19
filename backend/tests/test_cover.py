@@ -1,4 +1,4 @@
-"""Portadas: se dibujan en el primer paso, se copian al catálogo y las Lambdas de lectura dan su URL solo si existe. Sin AWS."""
+"""Portadas: se dibujan (al subir: ver test_ingest), el catálogo da su URL solo si existe y hay un script para los libros antiguos. Sin AWS."""
 
 import io
 import json
@@ -7,10 +7,7 @@ import pytest
 from PIL import Image
 
 from lambdas.books.handler import handler as books_handler
-from lambdas.extract_chunk import handler as extract_module
 from lambdas.extract_chunk.cover import COVER_WIDTH, render_cover
-from lambdas.jobs.handler import handler as jobs_handler
-from lambdas.store_book.handler import handler as store_handler
 from shared.storage import LocalStorage
 
 from .test_extract_chunk_handler import make_pdf
@@ -49,68 +46,9 @@ def test_un_pdf_que_no_se_puede_dibujar_lanza_una_excepcion(tmp_path):
         render_cover(broken)
 
 
-# ---- el primer paso la deja en S3 y un fallo no tumba el análisis ---------------------------------------------------------------------------
-
-
-def test_el_primer_paso_deja_la_portada_junto_a_los_chunks(storage, tmp_path):
-    put_pdf(storage, tmp_path)
-    result = extract_module.handler({"jobId": "job1", "bucket": "subidas", "key": "uploads/job1/libro.pdf"}, storage=storage)
-    assert result["hasCover"] is True
-    assert storage.exists("subidas", "jobs/job1/cover.jpg")
-    assert storage._path("subidas", "jobs/job1/cover.jpg").read_bytes()[:2] == b"\xff\xd8"
-
-
-def test_si_la_portada_falla_el_libro_se_analiza_igual(storage, tmp_path, monkeypatch):
-    put_pdf(storage, tmp_path)
-
-    def boom(_path):
-        raise RuntimeError("pdfium no pudo")
-
-    monkeypatch.setattr(extract_module, "render_cover", boom)
-    result = extract_module.handler({"jobId": "job1", "bucket": "subidas", "key": "uploads/job1/libro.pdf"}, storage=storage)
-    assert result["hasCover"] is False and result["chunkCount"] > 0
-    assert storage.try_get_json("subidas", result["chunksKey"]) is not None  # los chunks sí se guardaron
-    assert not storage.exists("subidas", "jobs/job1/cover.jpg")
-
-
-# ---- store_book: la portada pasa al bucket permanente --------------------------------------------------------------------------------------
-
-
-class FakeBooksTable:
-    def __init__(self):
-        self.items = []
-
-    def put_item(self, Item):
-        self.items.append(Item)
-
-
-EVENT = {"bucket": "subidas", "key": "uploads/job1/libro.pdf", "source": "mi-libro", "title": "Mi libro", "jobId": "job1", "pageCount": 3}
-
-
 @pytest.fixture(autouse=True)
 def env(monkeypatch):
     monkeypatch.setenv("BOOKS_BUCKET", "libros")
-    monkeypatch.setenv("UPLOAD_BUCKET", "subidas")
-
-
-def test_la_portada_se_copia_junto_al_pdf_y_el_catalogo_lo_apunta(storage, tmp_path):
-    put_pdf(storage, tmp_path)
-    storage.put_bytes("subidas", "jobs/job1/cover.jpg", b"\xff\xd8portada", "image/jpeg")
-    table = FakeBooksTable()
-    result = store_handler(EVENT, storage=storage, books_table=table)
-    assert result["hasCover"] is True and table.items[0]["hasCover"] is True
-    assert storage._path("libros", "books/mi-libro/cover.jpg").read_bytes() == b"\xff\xd8portada"
-
-
-def test_un_reproceso_sin_portada_nueva_borra_la_vieja_y_no_se_queda_con_la_de_otra_edicion(storage, tmp_path):
-    put_pdf(storage, tmp_path)
-    storage.put_bytes("libros", "books/mi-libro/cover.jpg", b"vieja", "image/jpeg")
-    storage.put_bytes("libros", "books/otro-libro/cover.jpg", b"ajena", "image/jpeg")
-    table = FakeBooksTable()
-    result = store_handler(EVENT, storage=storage, books_table=table)  # este trabajo no tiene cover.jpg
-    assert result["hasCover"] is False and table.items[0]["hasCover"] is False
-    assert not storage.exists("libros", "books/mi-libro/cover.jpg")
-    assert storage.exists("libros", "books/otro-libro/cover.jpg")  # la de otro libro no se toca
 
 
 # ---- las Lambdas de lectura -----------------------------------------------------------------------------------------------------------------
@@ -157,34 +95,6 @@ def test_solo_los_libros_con_portada_traen_su_url():
     assert "coverUrl" not in result["sin"] and "coverUrl" not in result["antiguo"]
     assert s3.signed == ["books/con/cover.jpg"]
     assert "hasCover" not in result["con"]  # el indicador interno no se expone
-
-
-def jobs(items, s3):
-    response = jobs_handler({}, jobs_table=FakeTable(items), s3_client=s3)
-    return {job["jobId"]: job for job in json.loads(response["body"])["jobs"]}
-
-
-def job(job_id, status, created):
-    return {"jobId": job_id, "status": status, "source": "mi-libro", "createdAt": created}
-
-
-def test_un_analisis_en_marcha_enseña_su_portada_y_uno_terminado_no_consulta_nada():
-    s3 = FakeS3(existing={"jobs/running/cover.jpg"})
-    result = jobs([job("running", "RUNNING", "3"), job("done", "DONE", "2"), job("uploading", "UPLOADING", "1")], s3)
-    assert result["running"]["coverUrl"] == "https://s3.test/jobs/running/cover.jpg?firma"
-    assert "coverUrl" not in result["done"] and "coverUrl" not in result["uploading"]
-    assert s3.heads == [("subidas", "jobs/running/cover.jpg")]  # solo se pregunta por el que está en marcha
-
-
-def test_si_la_portada_aun_no_existe_o_no_se_puede_comprobar_la_lista_sale_igual():
-    assert "coverUrl" not in jobs([job("a", "RUNNING", "1")], FakeS3())["a"]  # 404
-    assert "coverUrl" not in jobs([job("a", "RUNNING", "1")], FakeS3(fail_with=RuntimeError("sin permiso")))["a"]  # un fallo cualquiera
-
-
-def test_sin_bucket_configurado_no_hay_portadas_en_marcha(monkeypatch):
-    monkeypatch.delenv("UPLOAD_BUCKET")
-    s3 = FakeS3(existing={"jobs/a/cover.jpg"})
-    assert "coverUrl" not in jobs([job("a", "RUNNING", "1")], s3)["a"] and s3.heads == []
 
 
 # ---- el script para libros ya subidos ----------------------------------------------------------------------------------------------------------

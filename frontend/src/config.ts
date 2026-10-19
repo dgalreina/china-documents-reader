@@ -24,7 +24,22 @@ export function parseConfig(raw: unknown): AppConfig {
   return config;
 }
 
-export async function loadConfig(fetchFn: typeof fetch = fetch): Promise<AppConfig> {
+/** index.html pide la configuración nada más cargar (en paralelo con el JavaScript) y deja la promesa aquí. */
+declare global {
+  interface Window {
+    __configPromise?: Promise<unknown>;
+  }
+}
+
+export async function loadConfig(fetchFn: typeof fetch = fetch, early: Promise<unknown> | undefined = typeof window === 'undefined' ? undefined : window.__configPromise): Promise<AppConfig> {
+  // Si la petición temprana ya trajo una configuración válida, se usa y no se repite. Si falló o vino rara, se sigue por el camino normal, que explica el error.
+  if (early) {
+    try {
+      return parseConfig(await early);
+    } catch {
+      /* se vuelve a pedir abajo */
+    }
+  }
   let response: Response;
   try {
     response = await fetchFn('/config.json', { cache: 'no-store' });

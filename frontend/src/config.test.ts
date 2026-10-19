@@ -37,6 +37,25 @@ describe('loadConfig', () => {
   });
 });
 
+describe('loadConfig con la petición temprana de index.html', () => {
+  const fails = (async () => Promise.reject(new Error('no debería pedirse otra vez'))) as unknown as typeof fetch;
+
+  it('si la petición temprana ya trajo una configuración válida, se usa sin pedirla otra vez', async () => {
+    expect((await loadConfig(fails, Promise.resolve(valid))).userPoolClientId).toBe('cliente');
+  });
+
+  it('si la temprana falló (null) o vino incompleta, se pide de nuevo por el camino normal', async () => {
+    const answer = (async () => new Response(JSON.stringify(valid))) as unknown as typeof fetch;
+    expect((await loadConfig(answer, Promise.resolve(null))).userPoolId).toBe('eu-west-1_X');
+    expect((await loadConfig(answer, Promise.resolve({ region: 'x' }))).userPoolId).toBe('eu-west-1_X');
+    expect((await loadConfig(answer, Promise.reject(new Error('red')))).userPoolId).toBe('eu-west-1_X');
+  });
+
+  it('sin configuración válida en ninguno de los dos caminos, explica cómo crearla', async () => {
+    await expect(loadConfig((async () => new Response('<html></html>')) as unknown as typeof fetch, Promise.resolve(null))).rejects.toThrow(/write-front-config/);
+  });
+});
+
 describe('friendlyAuthError', () => {
   it('correo o contraseña mal: el mismo mensaje en los dos casos (no se revela si el correo existe)', () => {
     expect(friendlyAuthError({ code: 'NotAuthorizedException', message: 'Incorrect username or password.' })).toBe('Correo o contraseña incorrectos.');

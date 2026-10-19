@@ -169,11 +169,16 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const writeChunks = fn('WriteChunksFn', 'lambdas.write_mongo.handler.chunks_handler', 300, 512);
     const writeHitos = fn('WriteHitosFn', 'lambdas.write_mongo.handler.hitos_handler', 840, 1024);
     const finalize = fn('FinalizeFn', 'lambdas.write_mongo.handler.finalize_handler', 300, 512);
-    const storeBook = fn('StoreBookFn', 'lambdas.store_book.handler.handler', 120, 256);
+    const storeBook = fn('StoreBookFn', 'lambdas.store_book.handler.handler', 30, 256);
     // 29 s: API Gateway (HTTP API) corta cualquier integración a los 30 s, así que una Lambda más lenta no serviría de nada. Una página tarda ~5-8 s.
     // 512 MB de /tmp (el de por defecto) bastan: el PDF (hasta 100 MB) se baja ahí una vez y la Lambda "caliente" lo reutiliza.
     const booksApi = fn('BooksFn', 'lambdas.books.handler.handler', 15, 256);
     // Lee los hitos y personajes de un libro de Mongo (solo lectura). 20 s: conectar a Atlas en frío puede tardar un par de segundos.
+    // Prepara un libro recién subido: valida el PDF, lo guarda de forma permanente, dibuja la portada y lo apunta como "sin analizar". No llama a OpenAI.
+    // 120 s y 1 GB: baja el PDF (hasta 100 MB), lo abre con pypdf y dibuja su primera página.
+    const ingest = fn('IngestFn', 'lambdas.ingest.handler.handler', 120, 1024);
+    // Arranca el análisis de un libro ya subido (lo pide el usuario con el botón "Analizar"): solo apunta el trabajo y lanza Step Functions.
+    const analyze = fn('AnalyzeFn', 'lambdas.analyze.handler.handler', 15, 256);
     const readHitos = fn('ReadHitosFn', 'lambdas.read_hitos.handler.handler', 20, 512);
     // Borra un libro y TODO lo que es solo suyo (Mongo, S3, trabajos y catálogo). Los permisos más amplios de la app: va detrás del login y del límite de peticiones.
     const deleteBook = fn('DeleteBookFn', 'lambdas.delete_book.handler.handler', 60, 512);
@@ -181,14 +186,22 @@ export class ChinaDocumentsStack extends cdk.Stack {
 
     // Permisos mínimos para cada una.
     dataBucket.grantPut(presign); // firma subidas: necesita poder escribir en esa clave
-    jobs.grantWriteData(presign);
+    jobs.grantReadWriteData(presign); // apunta la subida y mira si el libro ya se está analizando o subiendo
+    booksTable.grantReadData(presign); // ...y si el libro ya existe (reemplazarlo hay que confirmarlo)
     jobs.grantReadData(jobStatus);
-    dataBucket.grantRead(jobStatus); // la portada de un análisis en marcha (jobs/<id>/cover.jpg): comprueba que existe y firma su URL
     for (const f of [extractChunk, embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos]) dataBucket.grantReadWrite(f);
-    dataBucket.grantRead(storeBook); // lee el PDF subido...
-    booksBucket.grantReadWrite(storeBook); // ...lo copia al bucket permanente y borra las traducciones viejas del libro
+    // ingest: lee la subida (y la borra al terminar), guarda PDF y portada en el bucket permanente, borra las traducciones si reemplaza un libro, y apunta el libro.
+    dataBucket.grantReadWrite(ingest);
+    booksBucket.grantReadWrite(ingest);
+    jobs.grantReadWriteData(ingest);
+    booksTable.grantReadWriteData(ingest);
+    // analyze: mira el libro y los trabajos en curso y apunta el análisis; arrancar Step Functions se concede más abajo, cuando existe la máquina.
+    booksTable.grantReadData(analyze);
+    jobs.grantReadWriteData(analyze);
+    // extract_chunk lee el PDF del bucket permanente de libros (sus ficheros intermedios siguen yendo al de datos).
+    booksBucket.grantRead(extractChunk);
     booksBucket.grantReadWrite(translate); // lee el PDF y lee/escribe la caché de traducciones
-    booksTable.grantWriteData(storeBook); // apunta el libro en el catálogo al terminar
+    booksTable.grantWriteData(storeBook); // al terminar el análisis, marca el libro como analizado en el catálogo (ya no toca S3)
     booksTable.grantReadWriteData(deleteBook); // lee y borra la entrada del catálogo
     jobs.grantReadWriteData(deleteBook); // busca y borra los trabajos del libro
     booksBucket.grantReadWrite(deleteBook); // borra el PDF, la portada y las traducciones
@@ -200,7 +213,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       actions: ['ssm:GetParameter'],
       resources: [cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: `${ssmPrefix.replace(/^\//, '')}/*`, arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME }, this)],
     });
-    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos y deleteBook: la URI de Mongo
+    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook, ingest]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos, deleteBook e ingest (al reemplazar un libro): la URI de Mongo
 
     // ------------------------------------------------------------------------------------------------- Step Functions
     const jobKey = { jobId: tasks.DynamoAttributeValue.fromString(sfn.JsonPath.stringAt('$.jobId')) };
@@ -218,12 +231,13 @@ export class ChinaDocumentsStack extends cdk.Stack {
         resultPath: sfn.JsonPath.DISCARD,
       });
 
-    // El evento de S3 trae bucket y clave (uploads/<jobId>/<nombre>.pdf); de la clave sale el jobId.
+    // El análisis lo arranca `analyze` con: bucket (donde el flujo deja sus intermedios, que caducan), pdfBucket + key (el PDF ya guardado en books/<libro>/original.pdf) y jobId.
     const parse = new sfn.Pass(this, 'ParseUpload', {
       parameters: {
         'bucket.$': '$.bucket',
+        'pdfBucket.$': '$.pdfBucket',
         'key.$': '$.key',
-        'jobId.$': "States.ArrayGetItem(States.StringSplit($.key, '/'), 1)",
+        'jobId.$': '$.jobId',
       },
     });
     // Lo que apuntó `presign`: de qué libro es (source) y si es un reproceso.
@@ -251,7 +265,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const extractStep = invoke(
       'ExtractChunk',
       extractChunk,
-      sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'key.$': '$.key' }),
+      sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'pdfBucket.$': '$.pdfBucket', 'key.$': '$.key' }),
       '$.extract',
     );
     const periodStep = invoke(
@@ -353,22 +367,12 @@ export class ChinaDocumentsStack extends cdk.Stack {
       '$.summary',
     );
 
-    // Último paso: guardar el PDF de forma permanente (y limpiar las traducciones viejas si es un reproceso).
+    // Último paso: marcar el libro como analizado en el catálogo.
     const storeBookStep = invoke(
       'StoreBook',
       storeBook,
-      sfn.TaskInput.fromObject({
-        'bucket.$': '$.bucket',
-        'key.$': '$.key',
-        'source.$': '$.job.Item.source.S',
-        // Lo que se apunta en el catálogo: lo que el usuario puso al subir, lo que midió extract_chunk y el resumen de Finalize.
-        'title.$': '$.job.Item.title.S',
-        'filename.$': '$.job.Item.filename.S',
-        'createdAt.$': '$.job.Item.createdAt.S',
-        'jobId.$': '$.jobId',
-        'pageCount.$': '$.extract.pageCount',
-        'summary.$': '$.summary',
-      }),
+      // Solo marca el libro como analizado en el catálogo: el PDF y la portada ya están guardados desde la subida.
+      sfn.TaskInput.fromObject({ 'source.$': '$.job.Item.source.S', 'jobId.$': '$.jobId', 'summary.$': '$.summary' }),
       sfn.JsonPath.DISCARD,
     );
 
@@ -392,7 +396,8 @@ export class ChinaDocumentsStack extends cdk.Stack {
       },
     });
 
-    // Cuando un PDF llega a uploads/ (solo lo sube `presign`), EventBridge arranca el flujo con su bucket y clave.
+    // Cuando un PDF llega a uploads/ (solo lo sube `presign`), EventBridge lo pasa a `ingest`, que lo prepara y lo deja "sin analizar". El análisis NO arranca solo:
+    // lo pide el usuario (POST /books/{slug}/analyze), porque cuesta dinero y hay libros que solo se quieren leer y traducir.
     new events.Rule(this, 'OnPdfUploaded', {
       eventPattern: {
         source: ['aws.s3'],
@@ -400,14 +405,17 @@ export class ChinaDocumentsStack extends cdk.Stack {
         detail: { bucket: { name: [dataBucket.bucketName] }, object: { key: [{ prefix: 'uploads/' }] } },
       },
       targets: [
-        new targets.SfnStateMachine(stateMachine, {
-          input: events.RuleTargetInput.fromObject({
+        new targets.LambdaFunction(ingest, {
+          event: events.RuleTargetInput.fromObject({
             bucket: events.EventField.fromPath('$.detail.bucket.name'),
             key: events.EventField.fromPath('$.detail.object.key'),
           }),
         }),
       ],
     });
+    // analyze necesita el ARN de la máquina (que se crea antes que esto) y permiso para arrancarla.
+    analyze.addEnvironment('STATE_MACHINE_ARN', stateMachine.stateMachineArn);
+    stateMachine.grantStartExecution(analyze);
 
     // ------------------------------------------------------------------------------------------------- login y API
     // Un solo usuario (el tuyo): el registro abierto está desactivado y la cuenta se crea a mano (ver infra/README.md).
@@ -448,6 +456,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     api.addRoutes({ path: '/jobs', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('JobListIntegration', jobStatus) });
     api.addRoutes({ path: '/books', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookListIntegration', booksApi) });
     api.addRoutes({ path: '/books/{slug}/pdf-url', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPdfIntegration', booksApi) });
+    api.addRoutes({ path: '/books/{slug}/analyze', methods: [apigw.HttpMethod.POST], integration: new integrations.HttpLambdaIntegration('BookAnalyzeIntegration', analyze) });
     api.addRoutes({ path: '/books/{slug}', methods: [apigw.HttpMethod.DELETE], integration: new integrations.HttpLambdaIntegration('BookDeleteIntegration', deleteBook) });
     api.addRoutes({ path: '/books/{slug}/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookHitosIntegration', readHitos) });
     api.addRoutes({ path: '/books/{slug}/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPersonajesIntegration', readHitos) });
@@ -466,9 +475,20 @@ export class ChinaDocumentsStack extends cdk.Stack {
     // ------------------------------------------------------------------------------------------- publicar la web
     // Sube frontend/dist (lo construye `npm run build:front`, que ya quita los PDFs de muestra) junto con config.json, que la web leerá para saber
     // dónde está la API. Se excluye samples/ por duplicado: un PDF en este bucket quedaría descargable por cualquiera con el enlace.
-    new s3deploy.BucketDeployment(this, 'DeploySite', {
+    // Se publica en DOS tandas con distinta caché:
+    //  1. assets/: los ficheros de la web con la huella del contenido en el nombre (index-DJLRIaQ5.js). Nunca cambian con ese nombre: se guardan un año y el navegador no vuelve a
+    //     preguntar por ellos. `prune: false` conserva los de versiones anteriores (unos kB): una pestaña abierta con la versión vieja puede seguir pidiendo sus ficheros.
+    //  2. el resto (index.html, config.json, iconos): SIEMPRE se revalida, para que una versión nueva se vea al instante. Va después de la 1: index.html nunca apunta a algo que aún no está.
+    const assets = new s3deploy.BucketDeployment(this, 'DeployAssets', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend', 'dist', 'assets'))],
+      destinationBucket: siteBucket,
+      destinationKeyPrefix: 'assets',
+      cacheControl: [s3deploy.CacheControl.fromString('public, max-age=31536000, immutable')],
+      prune: false,
+    });
+    const site = new s3deploy.BucketDeployment(this, 'DeploySite', {
       sources: [
-        s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend', 'dist'), { exclude: ['samples', 'samples/*', '*.pdf'] }),
+        s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend', 'dist'), { exclude: ['samples', 'samples/*', '*.pdf', 'assets', 'assets/*'] }),
         s3deploy.Source.jsonData('config.json', {
           region: this.region,
           apiUrl: api.apiEndpoint,
@@ -477,12 +497,13 @@ export class ChinaDocumentsStack extends cdk.Stack {
         }),
       ],
       destinationBucket: siteBucket,
-      exclude: ['samples/*'],
+      exclude: ['samples/*', 'assets/*'], // assets/ ya lo publica la tanda 1: esta no debe borrarlo (prune) ni tocarlo
       distribution,
       distributionPaths: ['/*'], // al subir una versión nueva, CloudFront olvida la anterior
-      cacheControl: [s3deploy.CacheControl.noCache()], // siempre revalidar: la web es pequeña y así una versión nueva se ve al instante
+      cacheControl: [s3deploy.CacheControl.noCache()],
       prune: true,
     });
+    site.node.addDependency(assets);
 
     // ------------------------------------------------------------------------------------------------------ salidas
     new cdk.CfnOutput(this, 'SiteUrl', { value: siteUrl, description: 'La web: ábrela desde el PC o el móvil' });

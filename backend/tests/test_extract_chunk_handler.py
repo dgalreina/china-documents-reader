@@ -65,3 +65,15 @@ def test_falta_un_campo_del_evento_da_error(storage):
 def test_el_almacenamiento_local_no_permite_salirse_de_su_carpeta(storage):
     with pytest.raises(ValueError):
         storage.get_json("bucket", "../../secreto.json")
+
+
+def test_el_pdf_se_lee_del_bucket_de_libros_y_los_intermedios_van_al_de_datos(storage, tmp_path):
+    local = tmp_path / "libro.pdf"
+    make_pdf(local)
+    target = storage._path("libros", "books/mi-libro/original.pdf")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(local.read_bytes())
+    result = handler({"jobId": "job1", "bucket": "datos", "pdfBucket": "libros", "key": "books/mi-libro/original.pdf"}, storage=storage)
+    assert result["chunkCount"] > 0 and result["bucket"] == "datos"
+    assert storage.exists("datos", "jobs/job1/chunks.json")  # los intermedios caducan con el bucket de datos
+    assert not storage.exists("libros", "jobs/job1/chunks.json")  # y NUNCA se mezclan con los libros permanentes

@@ -34,6 +34,8 @@ export interface ApiClient {
   ask(slug: string | null, question: string): Promise<ChatMessage>;
   /** Traduce una página al español (la primera vez tarda unos segundos; después sale de la caché). Rechaza con un mensaje en español. */
   getTranslation(slug: string, page: number): Promise<PageTranslation>;
+  /** Arranca el análisis (hitos y personajes) de un libro ya subido. Cuesta dinero (OpenAI), por eso no arranca solo al subir. Rechaza con un mensaje en español, p. ej. si ya se está analizando. */
+  analyzeBook(slug: string): Promise<{ jobId: string }>;
   /** Borra el libro y TODO lo que es solo suyo (PDF, portada, traducciones, hitos, personajes, análisis). Rechaza con un mensaje en español, p. ej. si aún se está analizando. */
   deleteBook(slug: string): Promise<void>;
   /** Avisa cuando cambian libros o trabajos (progreso, cola...). Devuelve la función para dejar de escuchar. */

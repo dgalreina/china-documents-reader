@@ -95,16 +95,16 @@ export class MockApi implements ApiClient {
     this.books = [
       {
         slug: SAMPLE_SLUG, title: 'The Oxford Handbook of Early China (capítulo de los Zhou, muestra)', filename: 'oxford-zhou.pdf',
-        pageCount: 20, status: 'DONE', createdAt: now, stats: SAMPLE_STATS,
+        pageCount: 20, analysis: 'done', createdAt: now, updatedAt: now, stats: SAMPLE_STATS,
       },
       {
         slug: 'gernet-mundo-chino', title: 'Jacques Gernet — El mundo chino', filename: 'gernet-mundo-chino.pdf',
-        pageCount: 0, status: 'DONE', createdAt: now, stats: { chunks: 0, chunksListos: 0, hitos: 0, personajes: 0, costeEstimadoUsd: 0 },
+        pageCount: 0, analysis: 'done', createdAt: now, updatedAt: now, stats: { chunks: 0, chunksListos: 0, hitos: 0, personajes: 0, costeEstimadoUsd: 0 },
       },
     ];
     this.jobs = [
       {
-        jobId: randomId(), slug: SAMPLE_SLUG, filename: 'oxford-zhou.pdf', status: 'DONE', phase: 'Terminado', progress: 1,
+        jobId: randomId(), kind: 'analysis', slug: SAMPLE_SLUG, filename: 'oxford-zhou.pdf', status: 'DONE', phase: 'Terminado', progress: 1,
         stats: SAMPLE_STATS, createdAt: now, finishedAt: now,
       },
     ];
@@ -125,36 +125,42 @@ export class MockApi implements ApiClient {
   async getHitos(slug: string): Promise<Hito[]> { return [...(this.hitos.get(slug) ?? [])]; }
   async getPersonajes(slug: string): Promise<Personaje[]> { return [...(this.personajes.get(slug) ?? [])]; }
 
+  private busy(slug: string): boolean {
+    return this.jobs.some((job) => job.slug === slug && (job.status === 'RUNNING' || job.status === 'QUEUED' || job.status === 'UPLOADING'));
+  }
+
+  /** Subir NO analiza: al terminar la subida el libro queda "sin analizar" (ya se puede leer y traducir). El análisis se pide con `analyzeBook`. */
   async startUpload(file: File, options: UploadOptions): Promise<{ jobId: string }> {
     const fileError = validatePdf(file);
     if (fileError) throw new Error(fileError);
     if (!isValidSlug(options.slug)) throw new Error('El identificador del libro debe tener entre 2 y 60 caracteres: minúsculas, números y guiones.');
     const existing = this.books.find((book) => book.slug === options.slug);
     if (existing && !options.replaceSource) {
-      throw new Error('Ya existe un libro con ese identificador: marca "Reprocesar" si quieres reemplazarlo.');
+      throw new Error('Ya existe un libro con ese identificador: confirma el reemplazo de su PDF (se borrarán su análisis, sus hitos y sus traducciones).');
     }
+    if (this.busy(options.slug)) throw new Error('Ese libro se está analizando o subiendo. Espera a que termine.');
 
-    const now = new Date().toISOString();
-    const job: Job = { jobId: randomId(), slug: options.slug, filename: file.name, status: 'UPLOADING', phase: 'Subiendo el PDF', progress: 0, createdAt: now };
-    const book: Book = {
-      slug: options.slug, title: options.title, filename: file.name, pageCount: Math.max(5, Math.round(file.size / 50_000)),
-      status: 'UPLOADING', createdAt: now,
+    const job: Job = {
+      jobId: randomId(), kind: 'upload', slug: options.slug, title: options.title, filename: file.name, status: 'UPLOADING', phase: 'Subiendo el PDF', progress: 0,
+      createdAt: new Date().toISOString(),
     };
-    this.books = [book, ...this.books.filter((b) => b.slug !== options.slug)];
-    this.jobs = [job, ...this.jobs.filter((j) => j.slug !== options.slug)];
+    this.jobs = [job, ...this.jobs.filter((j) => !(j.slug === options.slug && j.kind === 'upload'))];
     this.emit();
-    this.simulateUpload(job, file);
+    this.simulateUpload(job, file, options);
     return { jobId: job.jobId };
   }
 
   private patchJob(jobId: string, patch: Partial<Job>) {
     this.jobs = this.jobs.map((job) => (job.jobId === jobId ? { ...job, ...patch } : job));
-    const job = this.jobs.find((j) => j.jobId === jobId);
-    if (job) this.books = this.books.map((book) => (book.slug === job.slug ? { ...book, status: job.status, stats: job.stats ?? book.stats } : book));
     this.emit();
   }
 
-  private simulateUpload(job: Job, file: File) {
+  private patchBook(slug: string, patch: Partial<Book>) {
+    this.books = this.books.map((book) => (book.slug === slug ? { ...book, ...patch, updatedAt: new Date().toISOString() } : book));
+    this.emit();
+  }
+
+  private simulateUpload(job: Job, file: File, options: UploadOptions) {
     const ticks = 10;
     let done = 0;
     const timer = setInterval(() => {
@@ -164,13 +170,35 @@ export class MockApi implements ApiClient {
         return;
       }
       clearInterval(timer);
-      const batches = Math.max(2, Math.round(file.size / 400_000));
-      this.steps.set(job.jobId, buildSteps(batches));
-      this.enqueue(job.jobId);
+      if (/danado/i.test(file.name)) {
+        this.patchJob(job.jobId, { status: 'FAILED', phase: 'Ha fallado', progress: null, error: 'No se pudo leer el PDF: puede estar dañado.', finishedAt: new Date().toISOString() });
+        return;
+      }
+      const now = new Date().toISOString();
+      const book: Book = { slug: options.slug, title: options.title, filename: file.name, pageCount: Math.max(5, Math.round(file.size / 50_000)), analysis: 'none', createdAt: now, updatedAt: now };
+      this.books = [book, ...this.books.filter((b) => b.slug !== options.slug)];
+      this.hitos.delete(options.slug); // reemplazar el PDF invalida lo que se derivó del anterior
+      this.personajes.delete(options.slug);
+      this.patchJob(job.jobId, { status: 'DONE', phase: 'Terminado', progress: 1, finishedAt: now });
     }, this.uploadMs / ticks);
   }
 
-  /** Un libro a la vez: el resto espera en cola (en el backend real, por los límites de Lambda y de OpenAI). */
+  /** Arranca el análisis de un libro ya subido. Un libro a la vez: el resto espera en cola (en el backend real, por los límites de Lambda y de OpenAI). */
+  async analyzeBook(slug: string): Promise<{ jobId: string }> {
+    const book = this.books.find((candidate) => candidate.slug === slug);
+    if (!book) throw new Error('No existe ese libro.');
+    if (this.busy(slug)) throw new Error('Este libro ya se está analizando o subiendo. Espera a que termine.');
+    const job: Job = {
+      jobId: randomId(), kind: 'analysis', slug, title: book.title, filename: book.filename, status: 'RUNNING', phase: 'Analizando el libro', progress: 0,
+      createdAt: new Date().toISOString(),
+    };
+    this.jobs = [job, ...this.jobs];
+    this.steps.set(job.jobId, buildSteps(Math.max(2, Math.round(book.pageCount / 8))));
+    this.emit();
+    this.enqueue(job.jobId);
+    return { jobId: job.jobId };
+  }
+
   private enqueue(jobId: string) {
     if (this.running === null) {
       this.run(jobId);
@@ -220,6 +248,7 @@ export class MockApi implements ApiClient {
       descripcion: 'Hito simulado: aquí aparecería un hecho extraído del libro.', personajes: n === 1 ? [{ id: `${job.slug}-p1`, nombre: 'Personaje de ejemplo', rol: 'protagonista' }] : [],
     })));
     this.personajes.set(job.slug, [{ id: `${job.slug}-p1`, nombre: 'Personaje de ejemplo', rol: 'protagonista', descripcion: 'Ficha simulada.', hitoIds: [`${job.slug}-1`] }]);
+    this.patchBook(job.slug, { analysis: 'done', stats });
     this.finish(jobId, { status: 'DONE', phase: 'Terminado', progress: 1, stats });
   }
 

@@ -53,13 +53,3 @@ def purge_storage(storage, books_bucket: str, data_bucket: str, slug: str, job_i
         intermediates += storage.delete_prefix(data_bucket, f"jobs/{job_id}/")
         intermediates += storage.delete_prefix(data_bucket, f"uploads/{job_id}/")
     return {"libro": books, "traducciones": translations, "intermedios": intermediates}
-
-
-def scan_all(table) -> list[dict]:
-    items, kwargs = [], {}
-    while True:
-        page = table.scan(**kwargs)
-        items.extend(page.get("Items", []))
-        if "LastEvaluatedKey" not in page:
-            return items
-        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]

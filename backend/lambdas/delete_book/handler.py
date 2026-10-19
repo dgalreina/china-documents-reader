@@ -10,16 +10,15 @@ La petición ya llega autenticada (Cognito) y limitada a 2 por segundo.
 import json
 import os
 import time
-from datetime import datetime
 
+from shared.jobstate import busy_job, scan_all
 from shared.storage import S3Storage, Storage
 
 from ..presign.signer import SOURCE_PATTERN
 from ..write_mongo.store import cached_database
-from .purge import purge_mongo, purge_storage, scan_all
+from .purge import purge_mongo, purge_storage
 
 HEADERS = {"Content-Type": "application/json"}
-UPLOAD_GRACE_SECONDS = 15 * 60  # una subida más antigua no va a llegar: no impide borrar
 
 
 def _response(status: int, body: dict) -> dict:
@@ -36,18 +35,6 @@ def _jobs_table():
     import boto3
 
     return boto3.resource("dynamodb").Table(os.environ["JOBS_TABLE"])
-
-
-def _is_busy(job: dict, now: float) -> bool:
-    if job.get("status") == "RUNNING":
-        return True
-    if job.get("status") == "UPLOADING":
-        try:
-            created = datetime.fromisoformat(str(job.get("createdAt", "")).replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            return False
-        return now - created < UPLOAD_GRACE_SECONDS
-    return False
 
 
 def handler(
@@ -72,7 +59,7 @@ def handler(
         jobs = [job for job in scan_all(jobs_table) if job.get("source") == slug]
         if not item and not jobs:
             return _response(404, {"error": "No existe ese libro."})
-        if any(_is_busy(job, now if now is not None else time.time()) for job in jobs):
+        if busy_job(jobs_table, slug, now if now is not None else time.time()):
             return _response(409, {"error": "El libro se está analizando o subiendo. Espera a que termine para borrarlo."})
 
         mongo = purge_mongo(db if db is not None else cached_database(os.environ.get("MONGO_TARGET", "dev")), slug)

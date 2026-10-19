@@ -11,13 +11,14 @@ interface ProgressTabProps {
 const ACTIVE = new Set(['UPLOADING', 'QUEUED', 'RUNNING']);
 
 export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
-  const active = jobs.filter((job) => ACTIVE.has(job.status));
-  const finished = jobs.filter((job) => !ACTIVE.has(job.status));
+  // Una subida terminada ya es un libro en Archivos: aquí solo estorbaría. Se ven las que están en marcha o fallaron, y los análisis.
+  const shown = jobs.filter((job) => !(job.kind === 'upload' && job.status === 'DONE'));
+  const active = shown.filter((job) => ACTIVE.has(job.status));
+  const finished = shown.filter((job) => !ACTIVE.has(job.status));
   const titleOf = (job: Job) => job.title ?? books.find((book) => book.slug === job.slug)?.title ?? job.slug;
-  // La portada del análisis (ya dibujada desde el primer paso) o, si terminó, la del libro del catálogo.
-  const coverOf = (job: Job) => job.coverUrl ?? books.find((book) => book.slug === job.slug)?.coverUrl;
+  const coverOf = (job: Job) => books.find((book) => book.slug === job.slug)?.coverUrl; // la portada es la del libro (la dibuja la subida)
 
-  if (jobs.length === 0) return <p className="p-6 text-center text-sm text-stone">No hay análisis en marcha. Sube un PDF desde la pestaña Archivos.</p>;
+  if (shown.length === 0) return <p className="p-6 text-center text-sm text-stone">No hay nada en marcha. Sube un PDF desde la pestaña Archivos.</p>;
 
   return (
     <div className="space-y-4 p-3">

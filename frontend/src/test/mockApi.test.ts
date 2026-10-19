@@ -11,41 +11,82 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-const job = async (slug: string) => (await api.listJobs()).find((j) => j.slug === slug)!;
+const job = async (slug: string, kind?: 'upload' | 'analysis') => (await api.listJobs()).find((j) => j.slug === slug && (!kind || j.kind === kind))!;
 const book = async (slug: string) => (await api.listBooks()).find((b) => b.slug === slug)!;
+/** Sube un libro y espera a que la subida termine (queda "sin analizar"). */
+const upload = async (name = 'libro.pdf', slug = 'libro-nuevo') => {
+  await api.startUpload(pdf(name), options(slug));
+  await vi.advanceTimersByTimeAsync(120);
+};
 
 describe('datos iniciales', () => {
-  it('trae el libro de muestra ya procesado, con sus hitos y personajes', async () => {
-    expect((await book(SAMPLE_SLUG)).status).toBe('DONE');
+  it('trae el libro de muestra ya analizado, con sus hitos y personajes', async () => {
+    expect((await book(SAMPLE_SLUG)).analysis).toBe('done');
     expect(await api.getHitos(SAMPLE_SLUG)).toHaveLength(4);
     expect((await api.getPersonajes(SAMPLE_SLUG)).map((p) => p.nombre)).toContain('Rey Wu de Zhou');
   });
 });
 
-describe('subida y análisis', () => {
-  it('pasa por subir, analizar y terminar, y deja hitos y estadísticas', async () => {
+describe('subir (no analiza)', () => {
+  it('la subida avanza y al terminar deja el libro SIN ANALIZAR: sin hitos, sin estadísticas y sin ningún análisis en marcha', async () => {
     await api.startUpload(pdf(), options());
-    expect((await job('libro-nuevo')).status).toBe('UPLOADING');
+    expect((await job('libro-nuevo', 'upload')).status).toBe('UPLOADING');
+    expect(await book('libro-nuevo')).toBeUndefined(); // hasta que no termina la subida no es un libro
 
     await vi.advanceTimersByTimeAsync(60);
-    expect((await job('libro-nuevo')).progress).toBeGreaterThan(0); // la subida avanza
+    expect((await job('libro-nuevo', 'upload')).progress).toBeGreaterThan(0); // la subida avanza
 
-    await vi.advanceTimersByTimeAsync(60); // a los 120 ms: la subida (100 ms) ya acabó y el análisis (6 pasos de 10 ms) acaba de empezar
-    expect((await job('libro-nuevo')).status).toBe('RUNNING');
+    await vi.advanceTimersByTimeAsync(60);
+    expect((await job('libro-nuevo', 'upload')).status).toBe('DONE');
+    expect(await book('libro-nuevo')).toMatchObject({ analysis: 'none', title: 'Libro nuevo' });
+    expect((await book('libro-nuevo')).stats).toBeUndefined();
+    expect(await api.getHitos('libro-nuevo')).toEqual([]);
+    expect(await job('libro-nuevo', 'analysis')).toBeUndefined(); // NADA arrancó el análisis
 
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await job('libro-nuevo', 'analysis')).toBeUndefined(); // ni pasado un buen rato
+  });
+
+  it('un PDF dañado acaba en FAILED con su motivo y no crea el libro', async () => {
+    await upload('libro-danado.pdf', 'roto');
+    expect(await job('roto', 'upload')).toMatchObject({ status: 'FAILED', error: expect.stringMatching(/dañado/) });
+    expect(await book('roto')).toBeUndefined();
+  });
+
+  it('reemplazar el PDF de un libro analizado lo deja sin analizar y borra sus hitos', async () => {
+    await upload();
+    await api.analyzeBook('libro-nuevo');
     await vi.advanceTimersByTimeAsync(500);
-    expect((await job('libro-nuevo')).status).toBe('DONE');
-    expect((await book('libro-nuevo')).stats?.hitos).toBe(3);
+    expect(await book('libro-nuevo')).toMatchObject({ analysis: 'done' });
+    expect(await api.getHitos('libro-nuevo')).toHaveLength(3);
+
+    await api.startUpload(pdf('otro.pdf'), options('libro-nuevo', true));
+    await vi.advanceTimersByTimeAsync(120);
+    expect(await book('libro-nuevo')).toMatchObject({ analysis: 'none', filename: 'otro.pdf' });
+    expect(await api.getHitos('libro-nuevo')).toEqual([]);
+  });
+});
+
+describe('analizar (se pide aparte)', () => {
+  it('pasa por las fases, termina y deja el libro analizado con hitos y estadísticas', async () => {
+    await upload();
+    await api.analyzeBook('libro-nuevo');
+    expect((await job('libro-nuevo', 'analysis')).status).toBe('RUNNING');
+
+    await vi.advanceTimersByTimeAsync(600);
+    expect((await job('libro-nuevo', 'analysis')).status).toBe('DONE');
+    expect(await book('libro-nuevo')).toMatchObject({ analysis: 'done', stats: { hitos: 3 } });
     expect(await api.getHitos('libro-nuevo')).toHaveLength(3);
   });
 
-  it('el progreso del análisis nunca baja y recorre las fases en orden', async () => {
-    await api.startUpload(pdf(), options());
+  it('el progreso nunca baja y recorre las fases en orden', async () => {
+    await upload();
+    await api.analyzeBook('libro-nuevo');
     const phases: string[] = [];
     let last = 0;
     for (let i = 0; i < 80; i++) {
       await vi.advanceTimersByTimeAsync(10);
-      const j = await job('libro-nuevo');
+      const j = await job('libro-nuevo', 'analysis');
       if (j.status === 'RUNNING') {
         expect(j.progress).not.toBeNull();
         expect(j.progress!).toBeGreaterThanOrEqual(last);
@@ -57,35 +98,46 @@ describe('subida y análisis', () => {
   });
 
   it('un libro a la vez: el segundo espera en cola con su posición y empieza al terminar el primero', async () => {
-    await api.startUpload(pdf('a.pdf'), options('libro-a'));
-    await api.startUpload(pdf('b.pdf'), options('libro-b'));
-    await vi.advanceTimersByTimeAsync(120); // ambas subidas terminan
-    expect((await job('libro-a')).status).toBe('RUNNING');
-    const waiting = await job('libro-b');
+    await upload('a.pdf', 'libro-a');
+    await upload('b.pdf', 'libro-b');
+    await api.analyzeBook('libro-a');
+    await api.analyzeBook('libro-b');
+    expect((await job('libro-a', 'analysis')).status).toBe('RUNNING');
+    const waiting = await job('libro-b', 'analysis');
     expect(waiting.status).toBe('QUEUED');
     expect(waiting.queuePosition).toBe(1);
-    expect((await book('libro-b')).status).toBe('QUEUED');
 
-    await vi.advanceTimersByTimeAsync(1000);
-    expect((await job('libro-a')).status).toBe('DONE');
-    expect((await job('libro-b')).status).toBe('DONE');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect((await job('libro-a', 'analysis')).status).toBe('DONE');
+    expect((await job('libro-b', 'analysis')).status).toBe('DONE');
   });
 
-  it('un PDF escaneado termina en NEEDS_OCR con su explicación', async () => {
-    await api.startUpload(pdf('libro-escaneado.pdf'), options('escaneado'));
+  it('un PDF escaneado termina en NEEDS_OCR con su explicación y el libro sigue sin analizar', async () => {
+    await upload('libro-escaneado.pdf', 'escaneado');
+    await api.analyzeBook('escaneado');
     await vi.advanceTimersByTimeAsync(500);
-    const j = await job('escaneado');
+    const j = await job('escaneado', 'analysis');
     expect(j.status).toBe('NEEDS_OCR');
     expect(j.error).toMatch(/OCR/);
+    expect((await book('escaneado')).analysis).toBe('none');
   });
 
   it('un fallo a mitad queda en FAILED con su motivo y libera la cola', async () => {
-    await api.startUpload(pdf('libro-error.pdf'), options('con-error'));
-    await api.startUpload(pdf('b.pdf'), options('libro-b'));
-    await vi.advanceTimersByTimeAsync(1000);
-    expect((await job('con-error')).status).toBe('FAILED');
-    expect((await job('con-error')).error).toMatch(/OpenAI/);
-    expect((await job('libro-b')).status).toBe('DONE'); // el fallo del primero no bloquea al siguiente
+    await upload('libro-error.pdf', 'con-error');
+    await upload('b.pdf', 'libro-b');
+    await api.analyzeBook('con-error');
+    await api.analyzeBook('libro-b');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect((await job('con-error', 'analysis')).status).toBe('FAILED');
+    expect((await job('con-error', 'analysis')).error).toMatch(/OpenAI/);
+    expect((await job('libro-b', 'analysis')).status).toBe('DONE'); // el fallo del primero no bloquea al siguiente
+  });
+
+  it('no se analiza dos veces a la vez, ni un libro que no existe', async () => {
+    await upload();
+    await api.analyzeBook('libro-nuevo');
+    await expect(api.analyzeBook('libro-nuevo')).rejects.toThrow(/ya se está/);
+    await expect(api.analyzeBook('fantasma')).rejects.toThrow(/No existe/);
   });
 });
 
@@ -98,9 +150,15 @@ describe('validación al subir', () => {
     await expect(api.startUpload(pdf(), options('Con Espacios'))).rejects.toThrow(/identificador/);
   });
 
-  it('rechaza un libro que ya existe, salvo que se pida reprocesarlo', async () => {
-    await expect(api.startUpload(pdf(), options(SAMPLE_SLUG))).rejects.toThrow(/Reprocesar/);
+  it('un libro que ya existe pide confirmar el reemplazo; confirmado, se sube', async () => {
+    await expect(api.startUpload(pdf(), options(SAMPLE_SLUG))).rejects.toThrow(/reemplazo/);
     await expect(api.startUpload(pdf(), options(SAMPLE_SLUG, true))).resolves.toHaveProperty('jobId');
+  });
+
+  it('no se sube sobre un libro que se está analizando', async () => {
+    await upload();
+    await api.analyzeBook('libro-nuevo');
+    await expect(api.startUpload(pdf(), options('libro-nuevo', true))).rejects.toThrow(/analizando o subiendo/);
   });
 
   it('un rechazo no deja trabajos a medias', async () => {

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { PdfState } from '../state/usePdfDocument';
+import { CenteredSpinner } from './Spinner';
 
 interface PdfGateProps {
   /** La URL temporal del PDF (aún no llegó si es undefined). */
@@ -15,6 +16,6 @@ interface PdfGateProps {
 export function PdfGate({ url, urlError, pdf, children }: PdfGateProps) {
   const error = urlError ?? pdf.error;
   if (error) return <div role="alert" className="flex h-full items-center justify-center p-6 text-center text-seal-dark">{error}</div>;
-  if (!url || !pdf.doc) return <div className="flex h-full items-center justify-center text-stone">Cargando el PDF…</div>;
+  if (!url || !pdf.doc) return <CenteredSpinner caption="Abriendo el libro…" />;
   return <>{children(pdf.doc)}</>;
 }

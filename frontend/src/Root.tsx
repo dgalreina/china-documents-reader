@@ -3,6 +3,7 @@ import App from './App';
 import { HttpApi } from './api/httpApi';
 import { AuthService } from './auth/auth';
 import { LoginScreen } from './components/LoginScreen';
+import { LoadingShell } from './components/Spinner';
 import { loadConfig, type AppConfig } from './config';
 
 type Boot = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; config: AppConfig; auth: AuthService; signedIn: boolean };
@@ -41,7 +42,7 @@ export default function Root() {
     [ready?.signedIn, ready?.config, ready?.auth, signedOut],
   );
 
-  if (boot.status === 'loading') return <Centered>Cargando…</Centered>;
+  if (boot.status === 'loading') return <LoadingShell />;
   if (boot.status === 'error') {
     return (
       <Centered>

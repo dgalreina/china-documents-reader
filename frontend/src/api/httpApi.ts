@@ -1,5 +1,5 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, ChatMessage, Hito, Job, JobStatus, PageTranslation, Personaje, PersonajeRef } from '../types';
+import type { Book, BookStats, ChatMessage, Hito, Job, JobKind, JobStatus, PageTranslation, Personaje, PersonajeRef } from '../types';
 import type { ApiClient, ApiFeatures, UploadOptions } from './client';
 import { uploadToS3, type PresignedPost, type UploadFn } from './s3Upload';
 
@@ -29,12 +29,17 @@ interface ServerBook {
   filename?: string;
   pageCount?: number;
   createdAt?: string;
+  updatedAt?: string;
+  /** "none" (sin analizar) o "done". Los libros de antes de existir este campo estaban todos analizados. */
+  analysis?: string;
   stats?: ServerStats;
   coverUrl?: string | null;
 }
 
 interface ServerJob {
   jobId: string;
+  /** "upload" o "analysis"; los registros antiguos no lo traen y eran análisis. */
+  kind?: string;
   status: string;
   filename?: string;
   source: string;
@@ -42,7 +47,6 @@ interface ServerJob {
   createdAt?: string;
   finishedAt?: string;
   error?: string;
-  coverUrl?: string | null;
   /** El resumen que escribe Finalize al terminar (ver backend/lambdas/write_mongo/handler.py). */
   summary?: {
     chunks?: number;
@@ -108,8 +112,9 @@ export function mapBook(book: ServerBook): Book {
     title: book.title || book.slug,
     filename: book.filename ?? '',
     pageCount: num(book.pageCount),
-    status: 'DONE', // el catálogo solo contiene libros terminados
+    analysis: book.analysis === 'none' ? 'none' : 'done', // sin el campo = libro antiguo, que ya estaba analizado
     createdAt: book.createdAt ?? '',
+    updatedAt: book.updatedAt,
     coverUrl: book.coverUrl || undefined,
     stats: stats && {
       chunks: num(stats.chunks),
@@ -175,7 +180,7 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
       phase = PHASE.FAILED;
     } else if (local) {
       progress = local.progress;
-      if (local.progress >= 1) phase = 'Subido: empezando el análisis';
+      if (local.progress >= 1) phase = 'Subido: preparando el libro';
     } else if (now - Date.parse(job.createdAt ?? '') > UPLOAD_GRACE_MS) {
       status = 'FAILED';
       error = 'La subida no llegó a completarse. Vuelve a subir el PDF.';
@@ -184,8 +189,10 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
   }
   if (status === 'NEEDS_OCR') error = 'El PDF parece escaneado (sin texto): hace falta OCR, que todavía no está disponible.';
 
+  const kind: JobKind = job.kind === 'upload' ? 'upload' : 'analysis';
   return {
     jobId: job.jobId,
+    kind,
     slug: job.source,
     title: job.title,
     filename: job.filename ?? '',
@@ -194,7 +201,6 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
     progress,
     error,
     stats: summaryStats(job.summary),
-    coverUrl: job.coverUrl || undefined,
     createdAt: job.createdAt ?? '',
     finishedAt: job.finishedAt,
   };
@@ -299,6 +305,13 @@ export class HttpApi implements ApiClient {
 
   getTranslation(slug: string, page: number): Promise<PageTranslation> {
     return this.request<PageTranslation>(`/books/${encodeURIComponent(slug)}/pages/${page}/translation`);
+  }
+
+  async analyzeBook(slug: string): Promise<{ jobId: string }> {
+    const result = await this.request<{ jobId: string }>(`/books/${encodeURIComponent(slug)}/analyze`, { method: 'POST' });
+    this.active = true; // hay un análisis en marcha: a partir de ahora se pregunta por su avance
+    this.notify();
+    return { jobId: result.jobId };
   }
 
   async deleteBook(slug: string): Promise<void> {

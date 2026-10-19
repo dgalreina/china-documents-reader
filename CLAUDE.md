@@ -201,7 +201,7 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   tambien lleva ahora `paragraphPages`). Lambda `read_hitos` (`GET /books/{slug}/hitos` y `/personajes`, solo lectura, filtra por `origen` y por libro, tope 500)
   y pestañas Hitos/Personajes con datos reales. Los hitos ya guardados antes (`oxford-test`, `oxford-prueba`) NO tienen pagina hasta reprocesar el libro.
   **Estilo (v2):** cabecera translucida que FLOTA sobre el visor (solo el titulo; HEADER_HEIGHT en lib/layout.ts), pildora Original/Español + pagina arriba a la derecha, panel cerrado
-  por defecto con una lengueta en el borde derecho (en PC EMPUJA al PDF, en movil se superpone), pestañas del panel arriba con icono y texto debajo. **Portadas (hecho, sin desplegar):** `extract_chunk` dibuja la 1a pagina con `pypdfium2`+Pillow (JPEG 360 px, ~30 KB; opcional: si falla, el analisis sigue) en `jobs/<id>/cover.jpg`;
+  por defecto con una lengueta en el borde derecho (en PC EMPUJA al PDF, en movil se superpone), pestañas del panel arriba con icono y texto debajo. **Portadas (hecho, sin desplegar):** `ingest` (al SUBIR, ya no en el analisis) dibuja la 1a pagina con `pypdfium2`+Pillow (JPEG 360 px, ~30 KB; opcional: si falla, el libro se guarda igual) en `books/<slug>/cover.jpg`;
   `store_book` la copia a `books/<slug>/cover.jpg` (y borra la vieja si el reproceso no trae) y marca `hasCover` en el catalogo; `books` y `jobs` devuelven `coverUrl` (URL firmada;
   `jobs` solo para los RUNNING). Web: `Cover` en Archivos y Progreso, con recambio 書. Libros ya subidos: `python -m lambdas.store_book.backfill_covers --table <BooksTableName>
   --bucket <BooksBucketName> [--write]` (por defecto solo muestra). Ojo: `pypdfium2` para Linux NO se ha podido probar hasta el primer despliegue (paquete de Lambdas 74 MB).
@@ -210,8 +210,18 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   el ULTIMO, el catalogo (si falla a medias el libro sigue en la lista y se reintenta). 409 mientras se analiza. Web: papelera en cada libro de Archivos + `ConfirmDialog` (portal en
   `body`: el panel usa `translate` y encerraria un `fixed`). Restos de pruebas sin catalogo: `python -m lambdas.delete_book.cli <slug> [--write]` (solo Mongo dev; por defecto solo cuenta).
   **Sin rebote** (`overflow-hidden overscroll-none` en html/body, como china-history) y panel con movimiento de 450 ms (Tailwind 4 anima `translate`, no `transform`).
-  **Siguiente (acordado, sin hacer):** analizar a peticion: al subir, una Lambda `ingest` guarda el PDF en `books/` (permanente), dibuja la portada y lo apunta como 'sin analizar'; boton
-  'Analizar' (con coste estimado ~0,01 USD/pagina) arranca el flujo; `analysis`: none/running/done/failed; reemplazar un PDF invalida lo derivado (misma rutina que borrar).
+  **Analizar a peticion (hecho, sin desplegar):** SUBIR NO ANALIZA. `presign` (kind `upload`) comprueba que no se pisa un libro (409 si existe y no se confirma el reemplazo, o si algo se
+  analiza/sube) y EventBridge manda el PDF a `ingest`: valida (no danado, sin contraseña), cuenta paginas, dibuja la portada, lo guarda en `books/<slug>/` (PERMANENTE; antes caducaba a los 30 dias en
+  `uploads/`) y lo apunta en el catalogo con `analysis: "none"`; si REEMPLAZA un libro, borra antes lo derivado del PDF anterior (misma rutina que borrar). Ya se puede leer y traducir. El boton **Analizar**
+  (con coste estimado ~0,01 USD/pagina, `AnalyzeDialog`) llama a `POST /books/{slug}/analyze` (Lambda `analyze`: 409 si ya hay algo en curso; apunta el trabajo kind `analysis` y arranca Step Functions
+  con `{bucket: intermedios, pdfBucket: books, key: books/<slug>/original.pdf, jobId}`). El flujo ya no copia el PDF: `store_book` solo hace `update_item` (analysis=done + estadisticas, condicion
+  `attribute_exists`: si el libro se borro mientras tanto, no se recrea). Catalogo: `analysis` = none|done (sin el campo = libro antiguo = done); lo que pasa AHORA (analizando, fallo, OCR) se deduce de
+  los trabajos (`lib/analysis.ts`). Intermedios (`jobs/<id>/`) siguen en el bucket de DATOS (caducan), el PDF se lee de `pdfBucket`. Web: chip de estado + Analizar/Volver a analizar en cada libro,
+  aviso con boton en Hitos/Personajes, Progreso oculta las subidas terminadas. Libros ya subidos antes: sin cambios (se tratan como analizados).
+  **Carga rapida (hecho, sin desplegar):** pantalla base en `index.html` (HTML+CSS en linea: spinner y cabecera, se ve antes de que cargue el JS; su gemelo React es `LoadingShell`); la config se pide YA
+  desde index.html (`window.__configPromise`) en paralelo con el JS; pdf.js sale del JS principal (807 -> 326 kB; `loadPdfjs()` con `import()` dinamico, prefetch al montar `App`); CDK en DOS tandas: `assets/`
+  (nombres con huella) `immutable` 1 año y el resto `no-cache`. **LECCION:** un `<link rel="stylesheet">` de Google Fonts BLOQUEA el primer pintado Y el arranque del JS (en red lenta, la web entera se quedaba en
+  blanco esperando tipografias): va como `rel="preload"` + `onload`. Cualquier hoja de estilos externa debe cargarse asi. Medido con 4G lento simulado: pantalla base a ~400 ms, entrada lista a ~1,6 s.
   **Identidad visual:** acento ROJO ZHOU `#8e1b1b` (seal-dark `#6c1212`, texto `#f6efe4`), el mismo del portfolio; el verde Shang es el de china-history. 'Listo'/'Analizando'
   van en neutro (tinta) para no confundirse con 'Error'. El libro `oxford-prueba` de la prueba de AWS no esta en el catalogo (se subio antes).
 

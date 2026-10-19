@@ -18,15 +18,22 @@ export interface Book {
   title: string;
   filename: string;
   pageCount: number;
-  status: JobStatus;
+  /** "none": subido pero sin analizar (ya se puede leer y traducir); "done": analizado (tiene hitos y personajes). Lo que está pasando AHORA (analizando, falló...) sale de los trabajos. */
+  analysis: 'none' | 'done';
   createdAt: string;
+  /** Cambia cuando el libro cambia (p. ej. al terminar un análisis): sirve para volver a pedir sus hitos. */
+  updatedAt?: string;
   stats?: BookStats;
   /** URL temporal de la portada (la primera página). Sin ella, la lista enseña un recambio. */
   coverUrl?: string;
 }
 
+/** "upload": la subida del PDF y su preparación; "analysis": el análisis (hitos, personajes), que se pide con el botón Analizar. */
+export type JobKind = 'upload' | 'analysis';
+
 export interface Job {
   jobId: string;
+  kind?: JobKind;
   slug: string;
   /** Título que se puso al subir (puede faltar en trabajos antiguos). */
   title?: string;
@@ -42,8 +49,6 @@ export interface Job {
   queuePosition?: number;
   error?: string;
   stats?: BookStats;
-  /** Portada del libro, si ya se ha dibujado (el primer paso del análisis la deja enseguida). */
-  coverUrl?: string;
   createdAt: string;
   finishedAt?: string;
 }

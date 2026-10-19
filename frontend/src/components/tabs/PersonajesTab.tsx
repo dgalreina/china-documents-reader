@@ -1,14 +1,18 @@
 import { formatYear } from '../../lib/format';
+import type { AnalysisState } from '../../lib/analysis';
 import type { Hito, Personaje } from '../../types';
+import { AnalysisNotice } from '../AnalysisNotice';
 
 interface PersonajesTabProps {
   personajes: Personaje[];
   hitos: Hito[];
   onGoToPage: (page: number) => void;
+  analysis?: AnalysisState | null;
+  onAnalyze?: () => void;
 }
 
-export function PersonajesTab({ personajes, hitos, onGoToPage }: PersonajesTabProps) {
-  if (personajes.length === 0) return <p className="p-6 text-center text-sm text-stone">Este libro aún no tiene personajes.</p>;
+export function PersonajesTab({ personajes, hitos, onGoToPage, analysis = null, onAnalyze }: PersonajesTabProps) {
+  if (personajes.length === 0) return <AnalysisNotice what="personajes" analysis={analysis} onAnalyze={onAnalyze} />;
 
   return (
     <ul className="space-y-2 p-3">

@@ -12,16 +12,61 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <!-- Las mismas tipografías que china-history: Manrope (texto) y Noto Serif SC (acentos en chino). -->
+    <!--
+      Pantalla de arranque: se ve en cuanto llega este HTML, antes de que cargue el JavaScript (React la sustituye al arrancar). Va con CSS en línea a propósito:
+      no depende de nada que esté aún descargándose. Su gemelo en React es LoadingShell (src/components/Spinner.tsx): mantenerlos parecidos.
+    -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #e9e7e2; }
+      .boot { position: relative; height: 100%; font-family: system-ui, sans-serif; }
+      .boot-bar { position: absolute; inset: 0 0 auto 0; height: 48px; border-bottom: 1px solid rgba(29, 27, 25, 0.1); background: rgba(233, 231, 226, 0.8); }
+      .boot-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+      .boot-spin svg { width: 56px; height: 56px; color: #6b6862; }
+      .boot-arc { animation: boot-turn 1.4s linear infinite; }
+      @keyframes boot-turn { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -100; } }
+      @media (prefers-reduced-motion: reduce) { .boot-arc { animation-duration: 4s; } }
+    </style>
+    <!--
+      La configuración (dirección de la API y datos de Cognito) se pide YA, en paralelo con la descarga del JavaScript, en lugar de esperar a que arranque React.
+      Si falla (p. ej. al desarrollar en local, donde no existe) no pasa nada: la web la vuelve a pedir y explica el error.
+    -->
+    <script>
+      window.__configPromise = fetch('/config.json', { cache: 'no-store' })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .catch(function () { return null; });
+    </script>
+    <!--
+      Las mismas tipografías que china-history: Manrope (texto) y Noto Serif SC (acentos en chino).
+      OJO: una hoja de estilos normal (`rel="stylesheet"`) BLOQUEA el primer pintado y también el arranque del JavaScript hasta que se descarga: con una red lenta
+      (o Google lento) la web entera esperaba por las tipografías y se quedaba en blanco. Así NO bloquea: se pide como "preload" y se activa al llegar; mientras tanto el
+      texto sale con la fuente del sistema y se cambia sola (`display=swap`). El <noscript> es para quien tenga JavaScript desactivado.
+    -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
+      rel="preload"
+      as="style"
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;700&display=swap"
-      rel="stylesheet"
+      onload="this.onload=null;this.rel='stylesheet'"
     />
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;700&display=swap" />
+    </noscript>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot" role="status" aria-label="Cargando">
+        <div class="boot-bar"></div>
+        <div class="boot-spin">
+          <!-- El jue del icono: una pista tenue y encima un trazo rojo que la recorre. El trazado (__JUE_PATH__, lo pone vite.config.ts) se declara una vez y se usa dos veces. -->
+          <svg viewBox="419.939 130.352 1084.337 1238.883" aria-hidden="true">
+            <defs><path id="boot-jue" d="__JUE_PATH__" pathLength="100" fill="none" stroke-width="39" stroke-linejoin="round" stroke-linecap="round" /></defs>
+            <use href="#boot-jue" stroke="currentColor" stroke-opacity="0.3" />
+            <use href="#boot-jue" class="boot-arc" stroke="#8e1b1b" stroke-dasharray="28 100" />
+          </svg>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

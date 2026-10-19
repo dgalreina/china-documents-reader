@@ -3,12 +3,12 @@
 AWS CDK (TypeScript). Un único stack, `ChinaDocumentsStack`, en `eu-west-1` (Irlanda).
 
 ```
-PDF subido a S3 ─► EventBridge ─► Step Functions ─► Lambdas (Python) ─► MongoDB Atlas
-   ▲                                    │
- URL firmada (presign)           estado de cada trabajo en DynamoDB
-   ▲
- API Gateway + login (Cognito)  ◄── la web (frontend/)
+SUBIR:    web ─► presign (URL firmada) ─► PDF en S3 ─► EventBridge ─► ingest ─► libro "sin analizar" (PDF + portada permanentes, catálogo)
+ANALIZAR: web ─► analyze (botón "Analizar") ─► Step Functions ─► Lambdas (Python) ─► MongoDB Atlas      (estado de cada trabajo en DynamoDB)
+          API Gateway + login (Cognito)  ◄── la web (frontend/)
 ```
+
+Subir **no** analiza (el análisis cuesta dinero en OpenAI): un libro subido ya se puede leer y traducir, y se analiza cuando el usuario lo pide.
 
 ## Qué crea
 
@@ -20,10 +20,10 @@ PDF subido a S3 ─► EventBridge ─► Step Functions ─► Lambdas (Python)
 | Bucket `GeodataBucket` | Datos geográficos externos (CHGIS no se puede redistribuir). Privado y no se borra con el stack. |
 | Tabla `BooksTable` (DynamoDB) | El catálogo de libros ya procesados (título, páginas, estadísticas): permanente y no se borra con el stack. La escribe `store_book` al terminar el flujo y la lee la Lambda `books`. |
 | Tabla `JobsTable` (DynamoDB) | Estado de cada trabajo (UPLOADING, RUNNING, DONE, FAILED, NEEDS_OCR) y su resumen. Pago por uso; caduca a los 30 días. |
-| 14 Lambdas (Python 3.11) | `presign`, `jobs`, `books`, `delete_book` (borra un libro y todo lo que es solo suyo), `read_hitos` (lee de Mongo los hitos y personajes de un libro; solo lectura), `extract_chunk`, periodo del libro, etiquetar+embeddings, hitos, 3 de escritura en Mongo, `store_book` (guarda el PDF de forma permanente y apunta el libro en el catálogo al final del flujo) y `translate_page` (traduce una página al español, con caché). |
+| 16 Lambdas (Python 3.11) | `presign`, `ingest` (prepara el PDF subido), `analyze` (arranca el análisis), `jobs`, `books`, `delete_book` (borra un libro y todo lo que es solo suyo), `read_hitos` (lee de Mongo los hitos y personajes de un libro; solo lectura), `extract_chunk`, periodo del libro, etiquetar+embeddings, hitos, 3 de escritura en Mongo, `store_book` (al final del análisis, marca el libro como analizado en el catálogo) y `translate_page` (traduce una página al español, con caché). |
 | Step Functions (Standard) | Reparte el libro en tandas de 100 chunks (hasta 5 a la vez), y escribe hitos y personajes **de uno en uno**. Se puede reanudar desde el paso fallido (*redrive*). |
 | Cognito | Un solo usuario, sin registro abierto. |
-| API Gateway (HTTP) | `POST /uploads`, `GET /jobs`, `GET /jobs/{jobId}`, `GET /books`, `GET /books/{slug}/pdf-url` (URL firmada de lectura del PDF, 6 h; `GET /books` trae además la URL de la portada de cada libro), `DELETE /books/{slug}`, `GET /books/{slug}/hitos` y `GET /books/{slug}/personajes` y `GET /books/{slug}/pages/{page}/translation`; todas exigen un token de Cognito. Limitada a 2 peticiones/s (ráfaga de 5). La traducción solo recibe libro y página, nunca texto; su Lambda dura como mucho 29 s porque API Gateway corta a los 30. |
+| API Gateway (HTTP) | `POST /uploads`, `POST /books/{slug}/analyze`, `GET /jobs`, `GET /jobs/{jobId}`, `GET /books`, `GET /books/{slug}/pdf-url` (URL firmada de lectura del PDF, 6 h; `GET /books` trae además la URL de la portada de cada libro), `DELETE /books/{slug}`, `GET /books/{slug}/hitos` y `GET /books/{slug}/personajes` y `GET /books/{slug}/pages/{page}/translation`; todas exigen un token de Cognito. Limitada a 2 peticiones/s (ráfaga de 5). La traducción solo recibe libro y página, nunca texto; su Lambda dura como mucho 29 s porque API Gateway corta a los 30. |
 
 El login en la web **no** protege la API por sí solo (cualquiera podría llamarla directamente): por eso la API valida el token.
 

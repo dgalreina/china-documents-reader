@@ -40,17 +40,28 @@ afterEach(() => vi.useRealTimers());
 describe('conversiones', () => {
   it('un libro del catálogo se convierte en un Book terminado, con 0 en lo que falte', () => {
     expect(mapBook({ slug: 'a', title: 'A', pageCount: 20, stats: { chunks: 58, hitos: 2 } })).toMatchObject({
-      slug: 'a', title: 'A', pageCount: 20, status: 'DONE', stats: { chunks: 58, hitos: 2, personajes: 0, costeEstimadoUsd: 0 },
+      slug: 'a', title: 'A', pageCount: 20, analysis: 'done', stats: { chunks: 58, hitos: 2, personajes: 0, costeEstimadoUsd: 0 },
     });
     expect(mapBook({ slug: 'sin-titulo' }).title).toBe('sin-titulo');
+  });
+
+  it('el estado de análisis del libro: "none" es sin analizar y cualquier otra cosa (o la ausencia, en libros antiguos) es analizado', () => {
+    expect(mapBook({ slug: 'a', analysis: 'none' }).analysis).toBe('none');
+    expect(mapBook({ slug: 'a', analysis: 'done' }).analysis).toBe('done');
+    expect(mapBook({ slug: 'a' }).analysis).toBe('done'); // los libros de antes de existir el campo ya estaban analizados
+    expect(mapBook({ slug: 'a', updatedAt: '2026-10-19T00:00:00Z' }).updatedAt).toBe('2026-10-19T00:00:00Z');
+  });
+
+  it('el tipo de trabajo: "upload" es una subida y todo lo demás (incluidos los registros antiguos, sin el campo) es un análisis', () => {
+    expect(mapJob({ jobId: 'j', status: 'DONE', source: 'a', kind: 'upload' }, NOW).kind).toBe('upload');
+    expect(mapJob({ jobId: 'j', status: 'RUNNING', source: 'a', kind: 'analysis' }, NOW).kind).toBe('analysis');
+    expect(mapJob({ jobId: 'j', status: 'RUNNING', source: 'a' }, NOW).kind).toBe('analysis');
   });
 
   it('la portada llega como URL; vacía o null es "sin portada" (la lista enseña el recambio)', () => {
     expect(mapBook({ slug: 'a', coverUrl: 'https://s3/portada?firma' }).coverUrl).toBe('https://s3/portada?firma');
     expect(mapBook({ slug: 'a', coverUrl: null }).coverUrl).toBeUndefined();
     expect(mapBook({ slug: 'a' }).coverUrl).toBeUndefined();
-    expect(mapJob({ jobId: 'j', status: 'RUNNING', source: 'a', coverUrl: 'https://s3/p' }, NOW).coverUrl).toBe('https://s3/p');
-    expect(mapJob({ jobId: 'j', status: 'RUNNING', source: 'a', coverUrl: '' }, NOW).coverUrl).toBeUndefined();
   });
 
   it('un trabajo terminado trae sus estadísticas del resumen (personajes = cuántos nombres)', () => {
@@ -313,5 +324,44 @@ describe('borrar un libro', () => {
     const server = fakeServer({});
     await makeApi(server).deleteBook('../otro').catch(() => undefined);
     expect(server.calls[0].url).toBe('https://api.test/books/..%2Fotro');
+  });
+});
+
+describe('analizar un libro', () => {
+  it('pide el análisis con POST, sin cuerpo, y avisa a la interfaz para que empiece a preguntar por el avance', async () => {
+    const server = fakeServer({ 'POST /books/mi-libro/analyze': () => ({ status: 202, body: { jobId: 'job-9', replaceSource: false } }) });
+    const api = makeApi(server);
+    const listener = vi.fn();
+    api.subscribe(listener);
+    expect(await api.analyzeBook('mi-libro')).toEqual({ jobId: 'job-9' });
+    expect(server.calls[0]).toMatchObject({ method: 'POST', url: 'https://api.test/books/mi-libro/analyze' });
+    expect(server.calls[0].body).toBeUndefined();
+    expect(server.calls[0].headers.authorization).toBe('Bearer tok-123');
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it('si ya se está analizando, el mensaje del servidor llega tal cual para enseñarlo en el diálogo', async () => {
+    const server = fakeServer({ 'POST /books/mi-libro/analyze': () => ({ status: 409, body: { error: 'Este libro ya se está analizando o subiendo. Espera a que termine.' } }) });
+    await expect(makeApi(server).analyzeBook('mi-libro')).rejects.toThrow(/ya se está analizando/);
+  });
+
+  it('tras pedirlo se sigue preguntando por el avance aunque aún no se hubiera cargado la lista', async () => {
+    vi.useFakeTimers();
+    const server = fakeServer({ 'POST /books/mi-libro/analyze': () => ({ status: 202, body: { jobId: 'j' } }) });
+    const api = makeApi(server, { pollMs: 1000 });
+    const listener = vi.fn();
+    api.subscribe(listener);
+    await api.analyzeBook('mi-libro');
+    listener.mockClear();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+
+  it('subir un PDF sobre un libro que ya existe: el servidor pide confirmar el reemplazo y la web lo muestra', async () => {
+    const server = fakeServer({
+      'GET /books': () => ({ body: { books: [] } }), // la web aún no lo sabía (lista vieja): el servidor es quien decide
+      'POST /uploads': () => ({ status: 409, body: { error: 'Ya existe un libro con ese identificador. Para reemplazar su PDF hay que confirmarlo.' } }),
+    });
+    await expect(makeApi(server).startUpload(pdf(), options())).rejects.toThrow(/Ya existe un libro/);
   });
 });

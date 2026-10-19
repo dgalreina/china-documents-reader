@@ -172,3 +172,69 @@ def test_un_titulo_invalido_da_400_y_no_registra_nada():
     table = FakeTable()
     response = handler(event({"filename": "libro.pdf", "title": "x" * 500}), s3_client=FakeS3(), jobs_table=table)
     assert response["statusCode"] == 400 and table.items == []
+
+
+# ---- subir no analiza: no se pisa un libro sin querer y la subida queda marcada como tal ------------------------------------------------------
+
+
+class Books:
+    def __init__(self, slugs=()):
+        self.slugs = set(slugs)
+
+    def get_item(self, Key):
+        return {"Item": {"slug": Key["slug"]}} if Key["slug"] in self.slugs else {}
+
+
+class ScanJobs(FakeTable):
+    def __init__(self, existing=()):
+        super().__init__()
+        self.existing = list(existing)
+
+    def scan(self, **kwargs):
+        return {"Items": self.existing}
+
+
+def upload(body, books, jobs):
+    return handler(event(body), s3_client=FakeS3(), jobs_table=jobs, books_table=books, now=NOW)
+
+
+NOW = 1_800_000_000.0
+
+
+def recent(job_id, status, source, age=60):
+    from datetime import datetime, timezone
+
+    return {"jobId": job_id, "status": status, "source": source, "createdAt": datetime.fromtimestamp(NOW - age, timezone.utc).isoformat()}
+
+
+def test_la_subida_se_apunta_como_subida_para_no_confundirla_con_un_analisis():
+    jobs = ScanJobs()
+    assert upload({"filename": "libro.pdf"}, Books(), jobs)["statusCode"] == 200
+    assert jobs.items[0]["kind"] == "upload" and jobs.items[0]["status"] == "UPLOADING"
+
+
+def test_un_libro_que_ya_existe_pide_confirmar_el_reemplazo_y_no_firma_ni_apunta_nada():
+    jobs, s3 = ScanJobs(), FakeS3()
+    response = handler(event({"filename": "libro.pdf"}), s3_client=s3, jobs_table=jobs, books_table=Books({"libro"}), now=NOW)
+    assert response["statusCode"] == 409 and "reemplazar" in json.loads(response["body"])["error"]
+    assert s3.calls == [] and jobs.items == []
+
+
+def test_con_el_reemplazo_confirmado_si_se_puede_subir_sobre_un_libro_existente():
+    jobs = ScanJobs()
+    response = upload({"filename": "libro.pdf", "replaceSource": True}, Books({"libro"}), jobs)
+    assert response["statusCode"] == 200 and jobs.items[0]["replaceSource"] is True
+
+
+@pytest.mark.parametrize("busy", [("RUNNING", 60), ("UPLOADING", 60)])
+def test_no_se_sube_sobre_un_libro_que_se_esta_analizando_o_subiendo(busy):
+    status, age = busy
+    jobs = ScanJobs([recent("j1", status, "libro", age)])
+    response = upload({"filename": "libro.pdf", "replaceSource": True}, Books({"libro"}), jobs)
+    assert response["statusCode"] == 409 and "analizando o subiendo" in json.loads(response["body"])["error"]
+    assert jobs.items == []
+
+
+def test_una_subida_abandonada_hace_rato_o_de_otro_libro_no_estorba():
+    jobs = ScanJobs([recent("j1", "UPLOADING", "libro", age=3600), recent("j2", "RUNNING", "otro-libro")])
+    assert upload({"filename": "libro.pdf"}, Books(), jobs)["statusCode"] == 200

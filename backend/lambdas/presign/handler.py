@@ -1,8 +1,12 @@
 """Punto de entrada de AWS Lambda detrás de API Gateway (HTTP API): POST /uploads  {"filename": "libro.pdf", "source"?, "title"?, "replaceSource"?}
 
-Hace dos cosas: (1) firma un permiso temporal para subir el PDF a S3 y (2) APUNTA EL TRABAJO en DynamoDB (estado UPLOADING, nombre del
-libro, si es un reproceso). Cuando el PDF llegue a S3, Step Functions arranca solo y lee ese registro: así el `source` y el reemplazo
-no tienen que viajar dentro del propio fichero.
+Hace tres cosas: (1) COMPRUEBA que no se pisa un libro sin querer, (2) firma un permiso temporal para subir el PDF a S3 y (3) APUNTA LA SUBIDA en
+DynamoDB (kind "upload", estado UPLOADING, nombre del libro, si reemplaza uno existente). Subir NO analiza: cuando el PDF llega a S3, `ingest` lo
+guarda de forma permanente, dibuja su portada y lo apunta en el catálogo como "sin analizar"; el análisis (que cuesta dinero) lo arranca el usuario
+con `analyze`. El `source` y el reemplazo viajan en este registro y no dentro del fichero.
+
+Si el libro ya existe hay que decir que se reemplaza (409 si no): reemplazar el PDF borra su análisis, hitos y traducciones. Y no se sube sobre un libro
+que se está analizando o subiendo (409).
 
 Responde en el formato que espera API Gateway: {"statusCode", "headers", "body"}. Los nombres de bucket y tabla vienen de variables de
 entorno que pone el CDK (UPLOAD_BUCKET, JOBS_TABLE). El CORS y el login (Cognito) se configuran en API Gateway, no aquí.
@@ -14,10 +18,16 @@ import os
 import time
 from datetime import datetime, timezone
 
+from shared.jobstate import busy_job
+
 from .signer import InvalidUpload, create_upload, resolve_source, resolve_title
 
 HEADERS = {"Content-Type": "application/json"}
 JOB_TTL_DAYS = 30  # DynamoDB borra el registro solo tras este tiempo (atributo expiresAt)
+
+
+class UploadConflict(Exception):
+    """La subida chocaría con lo que ya hay (se responde 409 con el mensaje)."""
 
 
 def _response(status: int, body: dict) -> dict:
@@ -53,7 +63,26 @@ def _jobs_table():
     return boto3.resource("dynamodb").Table(os.environ["JOBS_TABLE"])
 
 
-def handler(event: dict, _context=None, s3_client=None, jobs_table=None) -> dict:
+def _books_table():
+    if not os.environ.get("BOOKS_TABLE"):  # sin tabla configurada (pruebas locales) no hay con qué comparar
+        return None
+    import boto3
+
+    return boto3.resource("dynamodb").Table(os.environ["BOOKS_TABLE"])
+
+
+def _check_conflicts(slug: str, replace_source: bool, books_table, jobs_table, now: float) -> None:
+    if books_table is None:
+        return
+    if books_table.get_item(Key={"slug": slug}).get("Item") and not replace_source:
+        raise UploadConflict(
+            "Ya existe un libro con ese identificador. Para reemplazar su PDF hay que confirmarlo: se borrarán su análisis, sus hitos y sus traducciones."
+        )
+    if busy_job(jobs_table, slug, now):
+        raise UploadConflict("Ese libro se está analizando o subiendo. Espera a que termine.")
+
+
+def handler(event: dict, _context=None, s3_client=None, jobs_table=None, books_table=None, now: float | None = None) -> dict:
     try:
         data = _parse_body(event)
         filename = data.get("filename")
@@ -63,11 +92,15 @@ def handler(event: dict, _context=None, s3_client=None, jobs_table=None) -> dict
         if not isinstance(replace_source, bool):
             raise InvalidUpload("replaceSource debe ser true o false.")
 
+        jobs_table = jobs_table or _jobs_table()
+        _check_conflicts(source, replace_source, books_table if books_table is not None else _books_table(), jobs_table, now if now is not None else time.time())
+
         upload = create_upload(s3_client or _s3_client(), os.environ["UPLOAD_BUCKET"], filename)
         # Se apunta el trabajo ANTES de devolver la URL: si el PDF llegara a S3 sin registro, el flujo no sabría de qué libro es.
-        (jobs_table or _jobs_table()).put_item(
+        jobs_table.put_item(
             Item={
                 "jobId": upload["jobId"],
+                "kind": "upload",
                 "status": "UPLOADING",
                 "filename": filename,
                 "source": source,
@@ -80,3 +113,5 @@ def handler(event: dict, _context=None, s3_client=None, jobs_table=None) -> dict
         return _response(200, {**upload, "source": source, "title": title, "replaceSource": replace_source})
     except InvalidUpload as err:
         return _response(400, {"error": str(err)})
+    except UploadConflict as err:
+        return _response(409, {"error": str(err)})

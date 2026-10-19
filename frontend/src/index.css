@@ -45,3 +45,24 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
 }
+
+/* Spinner con la silueta del jue (ver JueSpinner.tsx): el dasharray
+   "28 100" deja un segmento visible de ~28% del contorno, que recorre el
+   perímetro completo desplazando el offset una vuelta entera. Mismo
+   patrón que vasija-girar en china-history-web. */
+@keyframes jue-girar {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+.animate-jue-girar {
+  animation: jue-girar 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-jue-girar {
+    animation-duration: 4s;
+  }
+}

@@ -5,6 +5,8 @@ interface ConfirmDialogProps {
   title: string;
   children: ReactNode;
   confirmLabel: string;
+  /** Lo que dice el botón mientras se hace lo pedido. */
+  busyLabel: string;
   /** Mientras se hace lo pedido: los botones se bloquean y no se puede cerrar. */
   busy: boolean;
   /** Mensaje si falló, para enseñarlo dentro del diálogo y poder reintentar. */
@@ -14,21 +16,25 @@ interface ConfirmDialogProps {
 }
 
 /**
- * Un diálogo de confirmación para lo que no se puede deshacer. El foco empieza en "Cancelar" (la opción segura), Escape o tocar fuera cancelan, y mientras
+ * Un diálogo de confirmación (para lo que no se puede deshacer o cuesta dinero). El foco empieza en "Cancelar" (la opción segura), Escape o tocar fuera cancelan, y mientras
  * se trabaja no se puede cerrar. Se dibuja en el `body` con un portal: el panel lateral se mueve con `translate`, y eso encerraría y recortaría un `fixed` dentro.
  */
-export function ConfirmDialog({ title, children, confirmLabel, busy, error, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ title, children, confirmLabel, busyLabel, busy, error, onConfirm, onCancel }: ConfirmDialogProps) {
   const titleId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
 
+  // Lo último que dijo el padre, sin reiniciar el efecto: `onCancel` es una función nueva en cada renderizado y el foco no debe volver a "Cancelar" cada vez.
+  const latest = useRef({ busy, onCancel });
+  latest.current = { busy, onCancel };
+
   useEffect(() => {
-    cancelRef.current?.focus();
+    cancelRef.current?.focus(); // solo al abrirse
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busy) onCancel();
+      if (event.key === 'Escape' && !latest.current.busy) latest.current.onCancel();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [busy, onCancel]);
+  }, []);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !busy && onCancel()}>
@@ -53,7 +59,7 @@ export function ConfirmDialog({ title, children, confirmLabel, busy, error, onCo
             Cancelar
           </button>
           <button onClick={onConfirm} disabled={busy} className="rounded-lg bg-seal px-3 py-1.5 text-sm font-semibold text-on-seal hover:bg-seal-dark disabled:opacity-60">
-            {busy ? 'Borrando…' : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </button>
         </div>
       </div>
