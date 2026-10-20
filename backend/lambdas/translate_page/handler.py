@@ -23,6 +23,8 @@ from pypdf import PdfReader
 
 from shared.storage import S3Storage, Storage
 
+from ..ocr.core import ocr_key
+from ..ocr.core import page_text as ocr_page_text
 from .translator import is_valid_slug, lookup_cached, translate_page
 
 HEADERS = {"Content-Type": "application/json"}
@@ -67,11 +69,19 @@ def _local_pdf(storage: Storage, bucket: str, slug: str, cache_dir: Path) -> Pat
     return path
 
 
+def _ocr_document(storage: Storage, bucket: str, slug: str) -> dict | None:
+    """El texto OCR del libro (un JSON con el de cada página), o None si no se hizo OCR."""
+    return storage.try_get_json(bucket, ocr_key(slug))
+
+
 def page_text(storage: Storage, bucket: str, slug: str, page: int, cache_dir: Path = CACHE_DIR) -> str:
     reader = PdfReader(str(_local_pdf(storage, bucket, slug, cache_dir)))
     if page > len(reader.pages):
         raise NotFound("Esa página no existe en el libro.")
-    return (reader.pages[page - 1].extract_text() or "").strip()  # solo esa página: no se lee el libro entero
+    text = (reader.pages[page - 1].extract_text() or "").strip()  # solo esa página: no se lee el libro entero
+    if text:
+        return text
+    return ocr_page_text(_ocr_document(storage, bucket, slug), page)  # un PDF escaneado no tiene texto propio: se usa el del OCR, si se hizo
 
 
 def handler(event: dict, _context=None, storage: Storage | None = None, client=None, cache_dir: Path = CACHE_DIR) -> dict:

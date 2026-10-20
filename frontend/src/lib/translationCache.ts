@@ -37,7 +37,7 @@ export async function readCachedTranslation(key: string): Promise<string | undef
   return new Promise((resolve) => {
     try {
       const request = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
-      request.onsuccess = () => resolve(typeof request.result === 'string' ? request.result : undefined);
+      request.onsuccess = () => resolve(typeof request.result === 'string' && request.result.trim() ? request.result : undefined); // un texto vacío (página sin texto antes del OCR) no es una traducción
       request.onerror = () => resolve(undefined);
     } catch {
       resolve(undefined);
@@ -46,6 +46,7 @@ export async function readCachedTranslation(key: string): Promise<string | undef
 }
 
 export async function writeCachedTranslation(key: string, text: string): Promise<void> {
+  if (!text.trim()) return; // lo vacío no se guarda: puede dejar de serlo (p. ej. tras hacer OCR al libro)
   const db = await openDb();
   if (!db) return;
   try {

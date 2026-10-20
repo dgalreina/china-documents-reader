@@ -19,11 +19,13 @@ interface HitosTabProps {
   /** Estado del análisis del libro abierto, para explicar por qué no hay hitos y ofrecer analizarlo. */
   analysis?: AnalysisState | null;
   onAnalyze?: () => void;
+  scanned?: boolean;
+  onOcr?: () => void;
 }
 
 type Order = 'pagina' | 'año';
 
-export function HitosTab({ hitos, books, currentSlug, currentPage, onGoTo, onOpenBook, analysis = null, onAnalyze }: HitosTabProps) {
+export function HitosTab({ hitos, books, currentSlug, currentPage, onGoTo, onOpenBook, analysis = null, onAnalyze, scanned, onOcr }: HitosTabProps) {
   const [order, setOrder] = useState<Order>('año');
   const [scope, setScope] = useState<BookScope>('todos');
   const titleOf = (slug: string) => books.find((book) => book.slug === slug)?.title ?? slug;
@@ -43,7 +45,7 @@ export function HitosTab({ hitos, books, currentSlug, currentPage, onGoTo, onOpe
   );
 
   const bookCount = new Set(hitos.map((hito) => hito.fuente)).size;
-  if (hitos.length === 0) return <AnalysisNotice what="hitos" analysis={analysis} onAnalyze={onAnalyze} />;
+  if (hitos.length === 0) return <AnalysisNotice what="hitos" analysis={analysis} onAnalyze={onAnalyze} scanned={scanned} onOcr={onOcr} />;
 
   return (
     <div className="p-3">
@@ -67,7 +69,7 @@ export function HitosTab({ hitos, books, currentSlug, currentPage, onGoTo, onOpe
           </div>
         </div>
       </div>
-      {visible.length === 0 && <AnalysisNotice what="hitos" analysis={analysis} onAnalyze={onAnalyze} />}
+      {visible.length === 0 && <AnalysisNotice what="hitos" analysis={analysis} onAnalyze={onAnalyze} scanned={scanned} onOcr={onOcr} />}
       <ul className="space-y-2">
         {sorted.map((hito) => {
           const slug = hito.fuente ?? currentSlug;

@@ -17,10 +17,12 @@ const NONE: Record<number, PageState> = {};
  *   se ejecuta antes que uno de este hook y lo borraría.
  */
 export function useTranslations(api: ApiClient, slug: string | null, bookStamp?: string) {
-  const [state, setState] = useState<{ slug: string | null; pages: Record<number, PageState> }>({ slug, pages: {} });
-  const current = useRef({ slug, requested: new Set<number>(), peeked: new Set<number>() });
-  if (current.current.slug !== slug) current.current = { slug, requested: new Set(), peeked: new Set() };
-  const pages = state.slug === slug ? state.pages : NONE;
+  // El "ámbito" es el libro Y su versión (`bookStamp`: cambia al reemplazar el PDF o al hacerle OCR): al cambiar, se empieza de cero, porque las páginas que salieron vacías ya no lo son.
+  const scope = slug ? `${slug}|${bookStamp ?? ''}` : null;
+  const [state, setState] = useState<{ scope: string | null; pages: Record<number, PageState> }>({ scope, pages: {} });
+  const current = useRef({ scope, requested: new Set<number>(), peeked: new Set<number>() });
+  if (current.current.scope !== scope) current.current = { scope, requested: new Set(), peeked: new Set() };
+  const pages = state.scope === scope ? state.pages : NONE;
 
   const load = useCallback(
     (page: number) => {
@@ -29,7 +31,7 @@ export function useTranslations(api: ApiClient, slug: string | null, bookStamp?:
       if (book.requested.has(page)) return;
       book.requested.add(page);
       const set = (next: PageState) =>
-        setState((previous) => ({ slug, pages: { ...(previous.slug === slug ? previous.pages : {}), [page]: next } }));
+        setState((previous) => ({ scope, pages: { ...(previous.scope === scope ? previous.pages : {}), [page]: next } }));
       set({ status: 'loading' });
       const key = translationKey(slug, bookStamp, page);
       // Primero la caché del navegador (milisegundos); solo si no está, el servidor.
@@ -40,7 +42,7 @@ export function useTranslations(api: ApiClient, slug: string | null, bookStamp?:
           (result) => {
             if (current.current !== book) return; // el usuario ya cambió de libro: esta respuesta es de otro
             set({ status: 'done', text: result.text, cached: result.cached });
-            void writeCachedTranslation(key, result.text);
+            void writeCachedTranslation(key, result.text); // (los vacíos no se guardan: ver translationCache)
           },
           (error: unknown) => {
             if (current.current !== book) return;
@@ -50,7 +52,7 @@ export function useTranslations(api: ApiClient, slug: string | null, bookStamp?:
         );
       });
     },
-    [api, slug, bookStamp],
+    [api, slug, bookStamp, scope],
   );
 
   // Solo la caché del navegador: lo que está lo pone ya; lo que no, se queda como estaba (pendiente de que el lector lo pida de verdad).
@@ -64,11 +66,11 @@ export function useTranslations(api: ApiClient, slug: string | null, bookStamp?:
         void readCachedTranslation(translationKey(slug, bookStamp, page)).then((local) => {
           if (local === undefined || current.current !== book || book.requested.has(page)) return;
           book.requested.add(page);
-          setState((previous) => ({ slug, pages: { ...(previous.slug === slug ? previous.pages : {}), [page]: { status: 'done', text: local, cached: true } } }));
+          setState((previous) => ({ scope, pages: { ...(previous.scope === scope ? previous.pages : {}), [page]: { status: 'done', text: local, cached: true } } }));
         });
       }
     },
-    [slug, bookStamp],
+    [slug, bookStamp, scope],
   );
 
   const request = useCallback((list: number[]) => list.forEach(load), [load]);

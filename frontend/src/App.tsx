@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import type { ApiClient } from './api/client';
 import { AnalyzeDialog } from './components/AnalyzeDialog';
+import { OcrDialog } from './components/OcrDialog';
 import { Drawer } from './components/Drawer';
 import { CenteredSpinner, LoadingShell } from './components/Spinner';
 import { ChevronIcon } from './components/icons';
@@ -14,9 +15,11 @@ import { HitosTab } from './components/tabs/HitosTab';
 import { PersonajesTab } from './components/tabs/PersonajesTab';
 import { ProgressTab } from './components/tabs/ProgressTab';
 import { analysisState } from './lib/analysis';
+import { needsOcr } from './lib/ocr';
 import { HEADER_HEIGHT } from './lib/layout';
 import { LibraryProvider, useAllBookData, useLibrary } from './state/Library';
 import { useTranslations } from './state/Translations';
+import { useOcrPages } from './state/useOcrPages';
 import { loadPdfjs, usePdfDocument } from './state/usePdfDocument';
 import { usePdfUrl } from './state/usePdfUrl';
 import type { Book, JumpTarget, ReadMode, TabId } from './types';
@@ -68,7 +71,7 @@ const Message = ({ children }: { children: React.ReactNode }) => <div className=
 function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { api: client, books, jobs, loaded, error, reload, upload, analyze, remove } = useLibrary();
+  const { api: client, books, jobs, loaded, error, reload, upload, analyze, startOcr, remove } = useLibrary();
   const book = books.find((candidate) => candidate.slug === slug);
   const pendingJob = !book && slug ? jobs.find((job) => job.slug === slug) : undefined;
 
@@ -78,6 +81,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [target, setTarget] = useState<JumpTarget | null>(null);
   const [mode, setMode] = useState<ReadMode>(loadMode);
+  const [ocring, setOcring] = useState<Book | null>(null); // el libro escaneado cuyo OCR se está a punto de pedir (se elige el motor y se confirma el coste)
   const [analyzing, setAnalyzing] = useState<Book | null>(null); // el libro cuyo análisis se está a punto de pedir (se confirma el coste antes)
 
   // Hitos y personajes de TODOS los libros; se vuelven a pedir cuando cambia alguno (p. ej. al terminar un análisis o al borrar un libro).
@@ -86,7 +90,11 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const analysis = book ? analysisState(book, jobs) : null;
   const pdf = usePdfDocument(pdfUrl);
   const pageCount = pdf.doc?.numPages ?? 0;
-  const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null, book?.createdAt);
+  const ocrPages = useOcrPages(client, book);
+  // Cambia al reemplazar el PDF (createdAt) o al hacerle/repetirle el OCR (ocr.at): las traducciones que salieron vacías dejan de valer.
+  const translations = useTranslations(client, pdfUrl ? book?.slug ?? null : null, `${book?.createdAt ?? ''}|${book?.ocr?.at ?? ''}`);
+  const scanned = book ? needsOcr(book) : false;
+  const askOcr = book ? () => setOcring(book) : undefined;
   const activeJobs = jobs.filter((job) => job.status === 'UPLOADING' || job.status === 'QUEUED' || job.status === 'RUNNING').length;
 
   // Solo las pestañas que tienen datos reales detrás.
@@ -184,7 +192,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             <PdfGate url={pdfUrl} urlError={pdfError} pdf={pdf}>
               {(doc) =>
                 mode === 'es' ? (
-                  <ReaderView key={pdfUrl} doc={doc} translations={translations} target={target} onPageChange={setCurrentPage} />
+                  <ReaderView key={pdfUrl} doc={doc} translations={translations} target={target} onPageChange={setCurrentPage} ocrPages={ocrPages} />
                 ) : (
                   <PdfViewer key={pdfUrl} doc={doc} ratio={pdf.ratio} target={target} onPageChange={setCurrentPage} />
                 )
@@ -216,6 +224,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
                 books={books}
                 jobs={jobs}
                 onAnalyze={setAnalyzing}
+                onOcr={setOcring}
                 currentSlug={book?.slug}
                 onSelect={select}
                 onSignOut={onSignOut}
@@ -231,14 +240,15 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             ),
             progreso: <ProgressTab jobs={jobs} books={books} onSelect={select} />,
             hitos: (
-              <HitosTab hitos={hitos} books={books} currentSlug={book?.slug} currentPage={currentPage} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />
+              <HitosTab hitos={hitos} books={books} currentSlug={book?.slug} currentPage={currentPage} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} scanned={scanned} onOcr={askOcr} />
             ),
             personajes: (
-              <PersonajesTab personajes={personajes} hitos={hitos} books={books} currentSlug={book?.slug} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />
+              <PersonajesTab personajes={personajes} hitos={hitos} books={books} currentSlug={book?.slug} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} scanned={scanned} onOcr={askOcr} />
             ),
-            agente: <AgentTab api={client} slug={book?.slug ?? null} books={books} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} onGoTo={goTo} />,
+            agente: <AgentTab api={client} slug={book?.slug ?? null} books={books} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} scanned={scanned} onOcr={askOcr} onGoTo={goTo} />,
           }}
         />
+      {ocring && <OcrDialog book={ocring} onConfirm={startOcr} onClose={() => setOcring(null)} />}
       {analyzing && <AnalyzeDialog book={analyzing} jobs={jobs} onConfirm={analyze} onClose={() => setAnalyzing(null)} />}
     </div>
   );

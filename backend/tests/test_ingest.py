@@ -79,7 +79,7 @@ def test_una_subida_nueva_queda_guardada_con_portada_y_sin_analizar(storage, tmp
     put_upload(storage, tmp_path, pages=3)
     jobs, books = JobsTable(upload_job()), BooksTable()
     result = run(storage, jobs, books)
-    assert result == {"ok": True, "slug": "mi-libro", "pageCount": 3, "hasCover": True}
+    assert result == {"ok": True, "slug": "mi-libro", "pageCount": 3, "hasCover": True, "textLayer": True}  # el PDF de prueba tiene texto: no es un escaneado
     assert storage.exists("libros", "books/mi-libro/original.pdf")
     assert storage._path("libros", f"books/mi-libro/{COVER_KEY_NAME}").read_bytes()[:2] == b"\xff\xd8"
     item = books.items["mi-libro"]

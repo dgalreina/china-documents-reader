@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { analysisState, type AnalysisStatus } from '../../lib/analysis';
 import { MAX_PDF_MB, isValidSlug, suggestSlug, suggestTitle, validatePdf } from '../../lib/files';
 import { formatPercent } from '../../lib/format';
+import { OCR_ENGINE_NAME, needsOcr, ocrState } from '../../lib/ocr';
 import { pendingUploads } from '../../lib/uploads';
 import type { Book, Job } from '../../types';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -34,13 +35,15 @@ interface FilesTabProps {
   onUpload: (file: File, options: { slug: string; title: string; replaceSource: boolean }) => Promise<void>;
   /** Pide analizar un libro (la web enseña antes lo que costará). */
   onAnalyze?: (book: Book) => void;
+  /** Pide reconocer el texto de un libro escaneado (OCR; la web enseña antes lo que costará y deja elegir el motor). */
+  onOcr?: (book: Book) => void;
   /** Cierra la sesión. */
   onSignOut?: () => void;
   /** Borra un libro con todo lo suyo. Rechaza con un mensaje en español. */
   onDelete?: (slug: string) => Promise<void>;
 }
 
-export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnalyze, onSignOut, onDelete }: FilesTabProps) {
+export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnalyze, onOcr, onSignOut, onDelete }: FilesTabProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [pending, setPending] = useState<Book | null>(null); // el libro que se está a punto de borrar
   const [deleting, setDeleting] = useState(false);
@@ -94,6 +97,8 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
           ))}
           {books.map((book) => {
             const analysis = analysisState(book, jobs);
+            const ocr = ocrState(book, jobs);
+            const scanned = needsOcr(book);
             const current = book.slug === currentSlug;
             return (
               <li key={book.slug} className={`rounded border ${current ? 'border-seal bg-white' : 'border-line bg-white/50'}`}>
@@ -102,17 +107,45 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-sm font-semibold">{book.title}</span>
-                      <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold ${ANALYSIS_STYLE[analysis.status]}`}>{ANALYSIS_LABEL[analysis.status]}</span>
+                      {ocr.status === 'running' ? (
+                        <span className="shrink-0 whitespace-nowrap rounded bg-ink/10 px-1.5 py-0.5 text-[11px] font-semibold text-ink">Reconociendo texto…</span>
+                      ) : scanned ? (
+                        <span className="shrink-0 whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">Escaneado</span>
+                      ) : (
+                        <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold ${ANALYSIS_STYLE[analysis.status]}`}>{ANALYSIS_LABEL[analysis.status]}</span>
+                      )}
                     </div>
                     <div className="mt-1 text-xs text-stone">
                       {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin datos de páginas'}
                       {analysis.status === 'done' && book.stats && book.stats.hitos > 0 ? ` · ${book.stats.hitos} hitos · ${book.stats.personajes} personajes` : ''}
                     </div>
-                    {analysis.error && <p className="mt-1 text-xs text-red-700">{analysis.error}</p>}
+                    {book.ocr && <p className="mt-1 text-xs text-stone">Texto reconocido con {OCR_ENGINE_NAME[book.ocr.engine]}.</p>}
+                    {scanned && ocr.status !== 'running' && <p className="mt-1 text-xs text-stone">Es un escaneado: sin OCR no se puede traducir ni analizar.</p>}
+                    {ocr.status === 'failed' && <p className="mt-1 text-xs text-red-700">{ocr.error ?? 'El OCR falló.'}</p>}
+                    {!scanned && analysis.error && <p className="mt-1 text-xs text-red-700">{analysis.error}</p>}
                   </div>
                 </button>
                 <div className="flex items-center justify-between gap-2 border-t border-line/70 px-3 py-1">
-                  <AnalyzeAction status={analysis.status} onClick={onAnalyze ? () => onAnalyze(book) : undefined} />
+                  {ocr.status === 'running' ? (
+                    <span className="text-xs text-stone">Reconociendo texto; puedes seguir leyendo.</span>
+                  ) : scanned ? (
+                    onOcr ? (
+                      <button onClick={() => onOcr(book)} className="rounded-md border border-seal/40 px-2.5 py-1 text-xs font-semibold text-seal hover:bg-seal hover:text-on-seal">
+                        {ocr.status === 'failed' ? 'Reintentar OCR' : 'Reconocer texto (OCR)'}
+                      </button>
+                    ) : (
+                      <span />
+                    )
+                  ) : (
+                    <span className="flex items-center gap-3">
+                      <AnalyzeAction status={analysis.status} onClick={onAnalyze ? () => onAnalyze(book) : undefined} />
+                      {book.ocr && onOcr && (
+                        <button onClick={() => onOcr(book)} className="text-xs font-semibold text-stone underline decoration-line underline-offset-2 hover:text-ink">
+                          Repetir OCR
+                        </button>
+                      )}
+                    </span>
+                  )}
                   {onDelete && (
                     <button
                       onClick={() => setPending(book)}

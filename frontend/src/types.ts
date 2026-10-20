@@ -26,10 +26,25 @@ export interface Book {
   stats?: BookStats;
   /** URL temporal de la portada (la primera página). Sin ella, la lista enseña un recambio. */
   coverUrl?: string;
+  /** false = el PDF es un escaneado (solo imágenes, sin texto): no se puede traducir ni analizar hasta hacerle OCR. Sin el campo (libros antiguos) se da por bueno. */
+  textLayer?: boolean;
+  /** El OCR que se le hizo, si se le hizo. */
+  ocr?: BookOcr;
 }
 
-/** "upload": la subida del PDF y su preparación; "analysis": el análisis (hitos, personajes), que se pide con el botón Analizar. */
-export type JobKind = 'upload' | 'analysis';
+export type OcrEngine = 'textract' | 'openai';
+
+export interface BookOcr {
+  engine: OcrEngine;
+  pages: number;
+  /** Cuántas páginas salieron con texto (las demás eran imágenes o estaban en blanco). */
+  pagesWithText?: number;
+  /** Cuándo se hizo: cambia al repetirlo (sirve para volver a pedir el texto y las traducciones). */
+  at?: string;
+}
+
+/** "upload": la subida del PDF y su preparación; "analysis": el análisis (hitos, personajes), que se pide con el botón Analizar; "ocr": reconocer el texto de un escaneado. */
+export type JobKind = 'upload' | 'analysis' | 'ocr';
 
 export interface Job {
   jobId: string;

@@ -17,6 +17,8 @@ interface ReaderViewProps {
   translations: Translations;
   target: JumpTarget | null;
   onPageChange: (page: number) => void;
+  /** El texto OCR del libro (una cadena por página), si es un escaneado con OCR: el inglés que se enseña mientras llega la traducción. */
+  ocrPages?: string[] | null;
 }
 
 /**
@@ -29,7 +31,7 @@ interface ReaderViewProps {
  * Al cambiar una página de altura (el español ocupa más que el inglés) el scroll se recoloca con un ANCLA (la página que lees y a qué altura
  * de la pantalla está) para que lo que lees no se mueva. Los huecos tienen altura fija: si cambiaran con cada traducción, se moverían todas a la vez.
  */
-export function ReaderView({ doc, translations, target, onPageChange }: ReaderViewProps) {
+export function ReaderView({ doc, translations, target, onPageChange, ocrPages = null }: ReaderViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [current, setCurrent] = useState(1);
@@ -122,16 +124,26 @@ export function ReaderView({ doc, translations, target, onPageChange }: ReaderVi
   }, [settled, doc.numPages, request]);
 
   // El texto en inglés de las páginas cercanas, sacado del propio PDF (local y gratis).
+  const seenOcr = useRef(ocrPages);
   useEffect(() => {
+    // Al llegar (o cambiar) el texto OCR, el inglés ya leído de las páginas sin texto está vacío y hay que leerlo de nuevo. Va en el mismo efecto que la lectura: así siempre se
+    // limpia ANTES de leer (dos efectos separados correrían en el orden contrario y no se volvería a leer nada).
+    if (seenOcr.current !== ocrPages) {
+      seenOcr.current = ocrPages;
+      requestedEnglish.current.clear();
+      setEnglish({});
+    }
     for (let page = Math.max(1, current - ENGLISH_WINDOW); page <= Math.min(doc.numPages, current + ENGLISH_WINDOW); page++) {
       if (requestedEnglish.current.has(page)) continue;
       requestedEnglish.current.add(page);
       getPageText(doc, page).then(
-        (text) => setEnglish((previous) => ({ ...previous, [page]: joinLines(text) })),
-        () => setEnglish((previous) => ({ ...previous, [page]: '' })),
+        // Un PDF escaneado no tiene texto propio: se usa el del OCR (si lo hay).
+        (text) => setEnglish((previous) => ({ ...previous, [page]: joinLines(text.trim() ? text : ocrPages?.[page - 1] ?? '') })),
+        () => setEnglish((previous) => ({ ...previous, [page]: joinLines(ocrPages?.[page - 1] ?? '') })),
       );
     }
-  }, [current, doc]);
+  }, [current, doc, ocrPages]);
+
 
   // Saltar a una página (un hito, una cita del agente, el cambio de modo). Siempre al instante: con animación se recorrerían cientos de huecos.
   useEffect(() => {

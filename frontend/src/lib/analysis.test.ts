@@ -26,6 +26,11 @@ describe('analysisState', () => {
     expect(analysisState(book('none'), [job('UPLOADING', { kind: 'upload' }), job('RUNNING', { kind: 'upload' })]).status).toBe('none');
   });
 
+  it('un OCR en marcha NO es un análisis en marcha, ni uno fallido es un análisis fallido', () => {
+    expect(analysisState(book('none'), [job('RUNNING', { kind: 'ocr' })])).toEqual({ status: 'none' });
+    expect(analysisState(book('none'), [job('FAILED', { kind: 'ocr', error: 'Textract no pudo' })])).toEqual({ status: 'none' });
+  });
+
   it('un trabajo antiguo sin `kind` cuenta como análisis', () => {
     expect(analysisState(book('none'), [job('RUNNING')]).status).toBe('running');
   });

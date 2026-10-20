@@ -26,10 +26,23 @@ from pathlib import Path
 from shared.storage import S3Storage, Storage
 
 from .chunker import chunk_pages
-from .pdf_reader import extract_pages
+from ..ocr.core import ocr_key
+from ..ocr.core import page_text as ocr_page_text
+from .pdf_reader import Page, extract_pages
 
 # Si más de la mitad de las páginas no tiene texto, es un PDF escaneado (imágenes): hará falta OCR (Textract).
 SCANNED_RATIO = 0.5
+
+
+def _with_ocr(pages: list[Page], storage: Storage, pdf_bucket: str, key: str) -> list[Page]:
+    """Si el libro tiene OCR (`books/<slug>/ocr.json`), las páginas SIN texto toman el del OCR: así un escaneado ya se puede analizar. Las que sí tienen texto, no se tocan."""
+    parts = key.split("/")
+    if len(parts) < 3 or parts[0] != "books" or not any(not page.text for page in pages):
+        return pages
+    document = storage.try_get_json(pdf_bucket, ocr_key(parts[1]))
+    if not document:
+        return pages
+    return [page if page.text else Page(number=page.number, text=ocr_page_text(document, page.number).strip()) for page in pages]
 
 
 def handler(event: dict, _context=None, storage: Storage | None = None) -> dict:
@@ -42,6 +55,7 @@ def handler(event: dict, _context=None, storage: Storage | None = None) -> dict:
         pdf_path = Path(tmp) / "input.pdf"
         storage.download(pdf_bucket, key, pdf_path)
         pages = extract_pages(pdf_path)
+    pages = _with_ocr(pages, storage, pdf_bucket, key)
 
     chunks = chunk_pages(pages)
     empty = sum(1 for page in pages if not page.text)

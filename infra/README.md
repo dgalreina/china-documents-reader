@@ -109,3 +109,9 @@ de Cognito ella misma antes de escribir. `npm run build:ask` instala sus depende
 Para desarrollar la web contra el: `node infra/scripts/write-front-config.mjs` ya incluye `askUrl` si el stack lo tiene.
 
 **Lecciones del CI:** (1) `aws-cdk` (la herramienta de línea de comandos) está fijado en `infra/package.json`: con `npx cdk` sin instalarla, npm baja el paquete `cdk` más reciente y un día falló porque su dependencia aún no estaba publicada. Al subir `aws-cdk-lib`, sube también `aws-cdk` (que sea de la misma época). (2) El paso del `cdk diff` NO lleva `|| true`: un fallo ahí se tomaba por "sin cambios delicados". El clasificador (`scripts/classify-diff.mjs`) trata cualquier salida que no reconozca como delicada.
+
+## OCR (libros escaneados)
+
+`OcrPipeline` (Step Functions Standard) con 6 Lambdas (`OcrStartFn`, `OcrPrepareFn`, `OcrCheckFn`, `OcrCollectFn`, `OcrPagesFn`, `OcrFinishFn`; codigo en `backend/lambdas/ocr`). Motores: Amazon Textract
+(`textract:StartDocumentTextDetection` y `GetDocumentTextDetection` sobre `*`: Textract no admite permisos por recurso) y vision de OpenAI (usa la clave de SSM). El resultado queda en
+`books/<libro>/ocr.json` del bucket de libros (permanente). Rutas: `POST /books/{slug}/ocr` y `GET /books/{slug}/ocr-url`.

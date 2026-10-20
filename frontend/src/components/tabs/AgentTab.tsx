@@ -12,6 +12,9 @@ interface AgentTabProps {
   /** Estado del análisis del libro abierto: sin analizar no tiene fragmentos y el agente no puede responder sobre él. */
   analysis?: AnalysisState | null;
   onAnalyze?: () => void;
+  /** El libro abierto es un escaneado sin OCR: antes de preguntarle hay que reconocer su texto. */
+  scanned?: boolean;
+  onOcr?: () => void;
   /** Ir a una página de un libro (abre el libro si no es el actual). */
   onGoTo: (slug: string, page: number) => void;
 }
@@ -20,7 +23,7 @@ const HISTORY_TURNS = 6; // las últimas intervenciones que se mandan con cada p
 const ALL = '*';
 const button = 'mt-3 rounded-md border border-seal/40 px-3 py-1.5 text-sm font-semibold text-seal hover:bg-seal hover:text-on-seal';
 
-export function AgentTab({ api, slug, books, analysis = null, onAnalyze, onGoTo }: AgentTabProps) {
+export function AgentTab({ api, slug, books, analysis = null, onAnalyze, scanned = false, onOcr, onGoTo }: AgentTabProps) {
   const [scope, setScope] = useState<BookScope>('este');
   // La conversación se guarda por libro (y una aparte para "todos los libros"), para no mezclarlas al cambiar de PDF.
   const [conversations, setConversations] = useState<Record<string, ChatMessage[]>>({});
@@ -90,7 +93,7 @@ export function AgentTab({ api, slug, books, analysis = null, onAnalyze, onGoTo 
   };
 
   // Un libro sin analizar no tiene fragmentos: no hay nada que buscar. Se dice y se ofrece analizarlo (o preguntar a todos).
-  const blocked = !askAll && analysis !== null && analysis.status !== 'done';
+  const blocked = !askAll && (scanned || (analysis !== null && analysis.status !== 'done'));
 
   return (
     <div className="flex h-full flex-col">
@@ -105,7 +108,7 @@ export function AgentTab({ api, slug, books, analysis = null, onAnalyze, onGoTo 
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" aria-live="polite" aria-busy={busy}>
         {blocked ? (
-          <AgentNotice analysis={analysis} onAnalyze={onAnalyze} />
+          <AgentNotice analysis={analysis} onAnalyze={onAnalyze} scanned={scanned} onOcr={onOcr} />
         ) : (
           <>
             {messages.length === 0 && <p className="py-6 text-center text-sm text-stone">Pregunta lo que quieras sobre {askAll ? 'tus libros' : 'este libro'}.</p>}
@@ -148,8 +151,20 @@ export function AgentTab({ api, slug, books, analysis = null, onAnalyze, onGoTo 
   );
 }
 
-function AgentNotice({ analysis, onAnalyze }: { analysis: AnalysisState | null; onAnalyze?: () => void }) {
+function AgentNotice({ analysis, onAnalyze, scanned, onOcr }: { analysis: AnalysisState | null; onAnalyze?: () => void; scanned: boolean; onOcr?: () => void }) {
   const status = analysis?.status;
+  if (scanned) {
+    return (
+      <div className="p-3 text-center text-sm text-stone">
+        <p>Este libro es un escaneado (solo imágenes): para poder preguntarle hay que reconocer antes su texto con OCR y luego analizarlo.</p>
+        {onOcr && (
+          <button onClick={onOcr} className={button}>
+            Reconocer texto (OCR)
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="p-3 text-center text-sm text-stone">
       {status === 'none' && (

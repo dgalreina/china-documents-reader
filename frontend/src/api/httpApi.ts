@@ -1,6 +1,6 @@
 import { isValidSlug, validatePdf } from '../lib/files';
 import { readNdjson } from '../lib/ndjson';
-import type { Book, BookStats, Hito, Job, JobKind, JobStatus, PageTranslation, Personaje, PersonajeRef } from '../types';
+import type { Book, BookOcr, BookStats, Hito, Job, JobKind, JobStatus, OcrEngine, PageTranslation, Personaje, PersonajeRef } from '../types';
 import type { ApiClient, ApiFeatures, AskEvent, AskRequest, UploadOptions } from './client';
 import { uploadToS3, type PresignedPost, type UploadFn } from './s3Upload';
 
@@ -33,6 +33,9 @@ interface ServerBook {
   updatedAt?: string;
   /** "none" (sin analizar) o "done". Los libros de antes de existir este campo estaban todos analizados. */
   analysis?: string;
+  /** false = escaneado (sin texto). Los libros anteriores no lo traen. */
+  textLayer?: boolean;
+  ocr?: { engine?: string; pages?: number; pagesWithText?: number; at?: string } | null;
   stats?: ServerStats;
   coverUrl?: string | null;
 }
@@ -108,6 +111,11 @@ const PROGRESS_NOTIFY_MS = 300;
 // ---------------------------------------------------------------------------------------------------------------- conversiones
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 
+function mapOcr(ocr: ServerBook['ocr']): BookOcr | undefined {
+  if (!ocr) return undefined;
+  return { engine: ocr.engine === 'openai' ? 'openai' : 'textract', pages: num(ocr.pages), pagesWithText: ocr.pagesWithText === undefined ? undefined : num(ocr.pagesWithText), at: ocr.at };
+}
+
 export function mapBook(book: ServerBook): Book {
   const stats = book.stats;
   return {
@@ -119,6 +127,8 @@ export function mapBook(book: ServerBook): Book {
     createdAt: book.createdAt ?? '',
     updatedAt: book.updatedAt,
     coverUrl: book.coverUrl || undefined,
+    textLayer: typeof book.textLayer === 'boolean' ? book.textLayer : undefined,
+    ocr: mapOcr(book.ocr),
     stats: stats && {
       chunks: num(stats.chunks),
       chunksListos: num(stats.chunksListos),
@@ -192,9 +202,10 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
       phase = PHASE.FAILED;
     }
   }
-  if (status === 'NEEDS_OCR') error = 'El PDF parece escaneado (sin texto): hace falta OCR, que todavía no está disponible.';
+  if (status === 'NEEDS_OCR') error = 'Este PDF es un escaneado (sin texto): primero reconoce su texto con OCR (botón «Reconocer texto» en Archivos) y luego analízalo.';
 
-  const kind: JobKind = job.kind === 'upload' ? 'upload' : 'analysis';
+  const kind: JobKind = job.kind === 'upload' ? 'upload' : job.kind === 'ocr' ? 'ocr' : 'analysis';
+  if (kind === 'ocr' && status === 'RUNNING') phase = 'Reconociendo el texto (OCR)';
   return {
     jobId: job.jobId,
     kind,
@@ -312,6 +323,35 @@ export class HttpApi implements ApiClient {
   async getAllPersonajes(): Promise<Personaje[]> {
     const { personajes } = await this.request<{ personajes: ServerPersonaje[] }>('/personajes');
     return personajes.map(mapPersonaje);
+  }
+
+  async startOcr(slug: string, engine: OcrEngine): Promise<{ jobId: string; estimatedCostUsd: number }> {
+    const result = await this.request<{ jobId: string; estimatedCostUsd?: number }>(`/books/${encodeURIComponent(slug)}/ocr`, { method: 'POST', body: JSON.stringify({ engine }) });
+    this.active = true; // hay un OCR en marcha: a partir de ahora se pregunta por su avance
+    this.notify();
+    return { jobId: result.jobId, estimatedCostUsd: num(result.estimatedCostUsd) };
+  }
+
+  private ocrPages = new Map<string, string[]>();
+
+  async getOcrPages(slug: string, stamp = ''): Promise<string[] | null> {
+    const key = `${slug}|${stamp}`;
+    const cached = this.ocrPages.get(key);
+    if (cached) return cached;
+    const { url } = await this.request<{ url: string }>(`/books/${encodeURIComponent(slug)}/ocr-url`);
+    const send = this.options.fetchFn ?? fetch;
+    let response: Response;
+    try {
+      response = await send(url);
+    } catch {
+      throw new ApiError('No hay conexión para leer el texto del libro.');
+    }
+    if (!response.ok) throw new ApiError('No se pudo leer el texto reconocido del libro.', response.status);
+    const body = (await response.json().catch(() => null)) as { pages?: unknown } | null;
+    if (!body || !Array.isArray(body.pages)) throw new ApiError('El texto reconocido del libro no es válido.');
+    const pages = body.pages.map((page) => (typeof page === 'string' ? page : ''));
+    this.ocrPages.set(key, pages);
+    return pages;
   }
 
   async getPdfUrl(slug: string): Promise<string> {

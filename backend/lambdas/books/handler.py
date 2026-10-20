@@ -15,7 +15,8 @@ from decimal import Decimal
 from ..presign.signer import SOURCE_PATTERN
 
 PDF_URL_SECONDS = 6 * 3600  # pdf.js pide trozos del PDF mientras lees: la URL debe durar lo que una sesión de lectura
-PUBLIC_FIELDS = ("slug", "title", "filename", "pageCount", "analysis", "jobId", "createdAt", "updatedAt", "stats")
+PUBLIC_FIELDS = ("slug", "title", "filename", "pageCount", "analysis", "textLayer", "ocr", "jobId", "createdAt", "updatedAt", "stats")
+OCR_URL_SECONDS = 3600  # el navegador lo baja entero una vez al abrir el libro
 COVER_URL_SECONDS = 6 * 3600  # como la del PDF: dura lo que una sesión
 HEADERS = {"Content-Type": "application/json"}
 
@@ -80,6 +81,23 @@ def _pdf_url(slug: str, table, s3_client) -> dict:
     return _response(200, {"url": url, "expiresInSeconds": PDF_URL_SECONDS})
 
 
+def _ocr_url(slug: str, table, s3_client) -> dict:
+    """GET /books/{slug}/ocr-url: URL firmada del texto OCR del libro (un JSON con el texto de cada página), solo si el libro tiene OCR hecho."""
+    if not SOURCE_PATTERN.match(slug):
+        return _response(400, {"error": "Identificador de libro no válido."})
+    item = table.get_item(Key={"slug": slug}).get("Item")
+    if not item:
+        return _response(404, {"error": "No existe ese libro."})
+    if not item.get("ocr"):
+        return _response(404, {"error": "Este libro no tiene OCR."})
+    url = s3_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": os.environ["BOOKS_BUCKET"], "Key": f"books/{slug}/ocr.json", "ResponseContentType": "application/json"},
+        ExpiresIn=OCR_URL_SECONDS,
+    )
+    return _response(200, {"url": url, "expiresInSeconds": OCR_URL_SECONDS})
+
+
 def handler(event: dict, _context=None, books_table=None, s3_client=None) -> dict:
     route = event.get("routeKey", "")
     if route == "GET /books":
@@ -87,4 +105,7 @@ def handler(event: dict, _context=None, books_table=None, s3_client=None) -> dic
     if route == "GET /books/{slug}/pdf-url":
         slug = (event.get("pathParameters") or {}).get("slug", "")
         return _pdf_url(slug, books_table or _books_table(), s3_client or _s3_client())
+    if route == "GET /books/{slug}/ocr-url":
+        slug = (event.get("pathParameters") or {}).get("slug", "")
+        return _ocr_url(slug, books_table or _books_table(), s3_client or _s3_client())
     return _response(404, {"error": "Ruta desconocida."})

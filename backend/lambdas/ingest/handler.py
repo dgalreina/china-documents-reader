@@ -26,6 +26,7 @@ from shared.storage import S3Storage, Storage
 
 from ..delete_book.purge import purge_mongo
 from ..extract_chunk.cover import COVER_KEY_NAME, render_cover
+from ..ocr.core import detect_text_layer, ocr_key
 from ..presign.signer import SOURCE_PATTERN
 from ..write_mongo.store import cached_database
 
@@ -103,6 +104,7 @@ def _ingest(job: dict, bucket: str, key: str, storage: Storage, books_table, db)
         storage.download(bucket, key, path)
         pages = count_pages(path)
         cover = _try_cover(path)
+        text_layer = detect_text_layer(path)  # False = escaneado (solo imágenes): se ofrecerá OCR
 
     # El PDF y la portada nuevos, ya en su sitio permanente.
     storage.copy(bucket, key, books_bucket, f"books/{slug}/original.pdf")
@@ -115,6 +117,7 @@ def _ingest(job: dict, bucket: str, key: str, storage: Storage, books_table, db)
     if existing:  # lo derivado del PDF anterior ya no corresponde a este
         purge_mongo(db if db is not None else cached_database(os.environ.get("MONGO_TARGET", "dev")), slug)
         storage.delete_prefix(books_bucket, f"translations/{slug}/")
+        storage.delete_prefix(books_bucket, ocr_key(slug))  # el OCR era del PDF anterior
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     books_table.put_item(
@@ -124,13 +127,14 @@ def _ingest(job: dict, bucket: str, key: str, storage: Storage, books_table, db)
             "filename": str(job.get("filename") or ""),
             "pageCount": pages,
             "analysis": "none",
+            "textLayer": text_layer,
             "hasCover": cover is not None,
             "createdAt": now,
             "updatedAt": now,
         }
     )
     storage.delete_prefix(bucket, f"uploads/{key.split('/')[1]}/")  # la copia original ya no hace falta (y caducaría igualmente)
-    return {"slug": slug, "pageCount": pages, "hasCover": cover is not None}
+    return {"slug": slug, "pageCount": pages, "hasCover": cover is not None, "textLayer": text_layer}
 
 
 def handler(event: dict, _context=None, storage: Storage | None = None, jobs_table=None, books_table=None, db=None) -> dict:

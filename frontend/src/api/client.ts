@@ -1,4 +1,4 @@
-import type { Book, Fuente, Hito, Job, PageTranslation, Personaje } from '../types';
+import type { Book, Fuente, Hito, Job, OcrEngine, PageTranslation, Personaje } from '../types';
 
 /** Un turno de la conversación, tal como se manda al agente (solo texto: nunca ids ni citas). */
 export interface AskTurn {
@@ -64,6 +64,10 @@ export interface ApiClient {
   getTranslation(slug: string, page: number): Promise<PageTranslation>;
   /** Arranca el análisis (hitos y personajes) de un libro ya subido. Cuesta dinero (OpenAI), por eso no arranca solo al subir. Rechaza con un mensaje en español, p. ej. si ya se está analizando. */
   analyzeBook(slug: string): Promise<{ jobId: string }>;
+  /** Reconoce el texto de un libro escaneado (OCR) con el motor elegido. Cuesta dinero: la web enseña antes una estimación. Rechaza con un mensaje en español. */
+  startOcr(slug: string, engine: OcrEngine): Promise<{ jobId: string; estimatedCostUsd: number }>;
+  /** El texto OCR del libro, una cadena por página (índice 0 = página 1). `stamp` cambia cuando se repite el OCR. null si el libro no tiene OCR. */
+  getOcrPages(slug: string, stamp?: string): Promise<string[] | null>;
   /** Borra el libro y TODO lo que es solo suyo (PDF, portada, traducciones, hitos, personajes, análisis). Rechaza con un mensaje en español, p. ej. si aún se está analizando. */
   deleteBook(slug: string): Promise<void>;
   /** Avisa cuando cambian libros o trabajos (progreso, cola...). Devuelve la función para dejar de escuchar. */

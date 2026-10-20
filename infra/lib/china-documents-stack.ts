@@ -180,6 +180,13 @@ export class ChinaDocumentsStack extends cdk.Stack {
     // Arranca el análisis de un libro ya subido (lo pide el usuario con el botón "Analizar"): solo apunta el trabajo y lanza Step Functions.
     const analyze = fn('AnalyzeFn', 'lambdas.analyze.handler.handler', 15, 256);
     const readHitos = fn('ReadHitosFn', 'lambdas.read_hitos.handler.handler', 20, 512);
+    // OCR de libros escaneados (ver backend/lambdas/ocr): `OcrStart` lo arranca la API; el resto son pasos de la máquina de estados del OCR.
+    const ocrStart = fn('OcrStartFn', 'lambdas.ocr.handlers.start_handler', 15, 256);
+    const ocrPrepare = fn('OcrPrepareFn', 'lambdas.ocr.handlers.prepare_handler', 60, 256);
+    const ocrCheck = fn('OcrCheckFn', 'lambdas.ocr.handlers.check_handler', 30, 256);
+    const ocrCollect = fn('OcrCollectFn', 'lambdas.ocr.handlers.collect_handler', 900, 1024); // lee el resultado entero de Textract (cientos de miles de bloques en un libro grande)
+    const ocrPages = fn('OcrPagesFn', 'lambdas.ocr.handlers.pages_handler', 900, 1536); // dibuja páginas (pypdfium2) y espera a OpenAI
+    const ocrFinish = fn('OcrFinishFn', 'lambdas.ocr.handlers.finish_handler', 120, 512);
     // Borra un libro y TODO lo que es solo suyo (Mongo, S3, trabajos y catálogo). Los permisos más amplios de la app: va detrás del login y del límite de peticiones.
     const deleteBook = fn('DeleteBookFn', 'lambdas.delete_book.handler.handler', 60, 512);
     const translate = fn('TranslatePageFn', 'lambdas.translate_page.handler.handler', 29, 512);
@@ -198,6 +205,18 @@ export class ChinaDocumentsStack extends cdk.Stack {
     // analyze: mira el libro y los trabajos en curso y apunta el análisis; arrancar Step Functions se concede más abajo, cuando existe la máquina.
     booksTable.grantReadData(analyze);
     jobs.grantReadWriteData(analyze);
+    // OCR. Textract no admite permisos por recurso (solo "*"), y lee el PDF de S3 CON los permisos de quien lo llama: por eso esas Lambdas pueden leer el bucket de libros.
+    const textractAccess = new iam.PolicyStatement({ actions: ['textract:StartDocumentTextDetection', 'textract:GetDocumentTextDetection'], resources: ['*'] });
+    for (const f of [ocrPrepare, ocrCheck, ocrCollect]) f.addToRolePolicy(textractAccess);
+    booksBucket.grantRead(ocrPrepare);
+    dataBucket.grantReadWrite(ocrCollect); // deja el texto de cada página como trozo intermedio
+    booksBucket.grantRead(ocrPages);
+    dataBucket.grantReadWrite(ocrPages);
+    dataBucket.grantRead(ocrFinish); // lee los trozos...
+    booksBucket.grantReadWrite(ocrFinish); // ...y deja books/<libro>/ocr.json y borra las traducciones viejas
+    booksTable.grantReadWriteData(ocrFinish); // apunta el OCR en el catálogo
+    booksTable.grantReadData(ocrStart);
+    jobs.grantReadWriteData(ocrStart);
     // extract_chunk lee el PDF del bucket permanente de libros (sus ficheros intermedios siguen yendo al de datos).
     booksBucket.grantRead(extractChunk);
     booksBucket.grantReadWrite(translate); // lee el PDF y lee/escribe la caché de traducciones
@@ -213,7 +232,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       actions: ['ssm:GetParameter'],
       resources: [cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: `${ssmPrefix.replace(/^\//, '')}/*`, arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME }, this)],
     });
-    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook, ingest]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos, deleteBook e ingest (al reemplazar un libro): la URI de Mongo
+    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook, ingest, ocrPages]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos, deleteBook e ingest (al reemplazar un libro): la URI de Mongo
 
     // ------------------------------------------------------------------------------------------------- Step Functions
     const jobKey = { jobId: tasks.DynamoAttributeValue.fromString(sfn.JsonPath.stringAt('$.jobId')) };
@@ -396,6 +415,90 @@ export class ChinaDocumentsStack extends cdk.Stack {
       },
     });
 
+    // ------------------------------------------------------------------------------------------------- Step Functions: OCR
+    // Entrada (la pone `ocr.start_handler`): jobId, source, engine, pageCount, bucket (intermedios), pdfBucket + key (el PDF). Textract: arranca su trabajo asíncrono, se espera
+    // preguntando cada 20 s y se recoge el resultado. OpenAI: tandas de páginas (hasta 5 a la vez). En los dos casos `OcrFinish` junta el texto y lo deja listo.
+    const ocrMarkRunning = markStatus('OcrMarkRunning', 'RUNNING');
+    const ocrMarkFailed = markStatus('OcrMarkFailed', 'FAILED', {
+      expression: '#e = :e',
+      values: { ':e': tasks.DynamoAttributeValue.fromString(sfn.JsonPath.format('{}: {}', sfn.JsonPath.stringAt('$.error.Error'), sfn.JsonPath.stringAt('$.error.Cause'))) },
+    });
+    const ocrMarkDone = markStatus('OcrMarkDone', 'DONE', {
+      expression: 'summary = :sum',
+      values: { ':sum': tasks.DynamoAttributeValue.fromString(sfn.JsonPath.jsonToString(sfn.JsonPath.objectAt('$.summary'))) },
+    });
+    const ocrPrepareStep = invoke(
+      'OcrPrepare',
+      ocrPrepare,
+      sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'engine.$': '$.engine', 'pdfBucket.$': '$.pdfBucket', 'key.$': '$.key', 'pageCount.$': '$.pageCount' }),
+      '$.prepare',
+    );
+    const ocrWait = new sfn.Wait(this, 'OcrWait', { time: sfn.WaitTime.duration(cdk.Duration.seconds(20)) });
+    const ocrCheckStep = invoke('OcrCheck', ocrCheck, sfn.TaskInput.fromObject({ 'textractJobId.$': '$.prepare.textractJobId' }), '$.check');
+    const ocrCollectStep = invoke(
+      'OcrCollect',
+      ocrCollect,
+      sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'pageCount.$': '$.pageCount', 'textractJobId.$': '$.prepare.textractJobId' }),
+      '$.results',
+    );
+    const ocrPagesMap = new sfn.Map(this, 'OcrPagesBatches', {
+      itemsPath: '$.prepare.starts',
+      maxConcurrency: 5, // límites de OpenAI y cupo de Lambdas simultáneas de una cuenta nueva
+      itemSelector: {
+        'jobId.$': '$.jobId',
+        'bucket.$': '$.bucket',
+        'pdfBucket.$': '$.pdfBucket',
+        'key.$': '$.key',
+        'pageCount.$': '$.pageCount',
+        'start.$': '$$.Map.Item.Value',
+        size: 8, // = PAGES_PER_BATCH de backend/lambdas/ocr/handlers.py
+      },
+      resultPath: '$.results',
+    }).itemProcessor(
+      withRetry(
+        invoke(
+          'OcrPages',
+          ocrPages,
+          sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'pdfBucket.$': '$.pdfBucket', 'key.$': '$.key', 'pageCount.$': '$.pageCount', 'start.$': '$.start', 'size.$': '$.size' }),
+        ),
+      ),
+    );
+    const ocrFinishStep = invoke(
+      'OcrFinish',
+      ocrFinish,
+      sfn.TaskInput.fromObject({
+        'jobId.$': '$.jobId',
+        'source.$': '$.source',
+        'engine.$': '$.engine',
+        'bucket.$': '$.bucket',
+        'pdfBucket.$': '$.pdfBucket',
+        'pageCount.$': '$.pageCount',
+        'results.$': '$.results',
+      }),
+      '$.summary',
+    );
+    const ocrFailed = new sfn.Fail(this, 'OcrJobFailed', { error: 'OcrJobFailed', cause: 'Mira el campo error del registro del trabajo en DynamoDB' });
+    ocrMarkFailed.next(ocrFailed);
+    for (const step of [ocrMarkRunning, ocrPrepareStep, ocrCheckStep, ocrCollectStep, ocrPagesMap, ocrFinishStep, ocrMarkDone]) {
+      step.addCatch(ocrMarkFailed, { resultPath: '$.error' });
+    }
+    ocrWait.next(ocrCheckStep).next(new sfn.Choice(this, 'OcrTextractDone').when(sfn.Condition.stringEquals('$.check.status', 'SUCCEEDED'), ocrCollectStep.next(ocrFinishStep)).otherwise(ocrWait));
+    ocrPagesMap.next(ocrFinishStep);
+    ocrFinishStep.next(ocrMarkDone).next(new sfn.Succeed(this, 'OcrDone'));
+    const ocrMachine = new sfn.StateMachine(this, 'OcrPipeline', {
+      definitionBody: sfn.DefinitionBody.fromChainable(
+        ocrMarkRunning.next(ocrPrepareStep).next(new sfn.Choice(this, 'OcrEngine').when(sfn.Condition.stringEquals('$.engine', 'textract'), ocrWait).otherwise(ocrPagesMap)),
+      ),
+      stateMachineType: sfn.StateMachineType.STANDARD,
+      timeout: cdk.Duration.hours(3),
+      logs: {
+        destination: new logs.LogGroup(this, 'OcrPipelineLogs', { retention: logs.RetentionDays.ONE_MONTH, removalPolicy: cdk.RemovalPolicy.DESTROY }),
+        level: sfn.LogLevel.ERROR,
+      },
+    });
+    ocrStart.addEnvironment('OCR_STATE_MACHINE_ARN', ocrMachine.stateMachineArn);
+    ocrMachine.grantStartExecution(ocrStart);
+
     // Cuando un PDF llega a uploads/ (solo lo sube `presign`), EventBridge lo pasa a `ingest`, que lo prepara y lo deja "sin analizar". El análisis NO arranca solo:
     // lo pide el usuario (POST /books/{slug}/analyze), porque cuesta dinero y hay libros que solo se quieren leer y traducir.
     new events.Rule(this, 'OnPdfUploaded', {
@@ -460,6 +563,8 @@ export class ChinaDocumentsStack extends cdk.Stack {
     api.addRoutes({ path: '/books/{slug}', methods: [apigw.HttpMethod.DELETE], integration: new integrations.HttpLambdaIntegration('BookDeleteIntegration', deleteBook) });
     api.addRoutes({ path: '/books/{slug}/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookHitosIntegration', readHitos) });
     api.addRoutes({ path: '/books/{slug}/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPersonajesIntegration', readHitos) });
+    api.addRoutes({ path: '/books/{slug}/ocr', methods: [apigw.HttpMethod.POST], integration: new integrations.HttpLambdaIntegration('BookOcrIntegration', ocrStart) });
+    api.addRoutes({ path: '/books/{slug}/ocr-url', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookOcrUrlIntegration', booksApi) });
     // Los hitos y personajes de TODOS los libros (cada uno dice de cuál): una sola petición en lugar de una por libro (el freno de la API es de 2 por segundo).
     api.addRoutes({ path: '/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('AllHitosIntegration', readHitos) });
     api.addRoutes({ path: '/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('AllPersonajesIntegration', readHitos) });

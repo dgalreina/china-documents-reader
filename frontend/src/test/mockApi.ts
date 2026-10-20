@@ -1,5 +1,5 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, Fuente, Hito, Job, PageTranslation, Personaje } from '../types';
+import type { Book, BookStats, Fuente, Hito, Job, OcrEngine, PageTranslation, Personaje } from '../types';
 import type { ApiClient, AskEvent, AskRequest, UploadOptions } from '../api/client';
 
 // ---- Datos de ejemplo ------------------------------------------------------------------------------------------------------------------
@@ -187,6 +187,28 @@ export class MockApi implements ApiClient {
       this.personajes.delete(options.slug);
       this.patchJob(job.jobId, { status: 'DONE', phase: 'Terminado', progress: 1, finishedAt: now });
     }, this.uploadMs / ticks);
+  }
+
+  /** Reconocer el texto de un escaneado: tarda un poco y deja el libro con OCR. */
+  async startOcr(slug: string, engine: OcrEngine): Promise<{ jobId: string; estimatedCostUsd: number }> {
+    const book = this.books.find((candidate) => candidate.slug === slug);
+    if (!book) throw new Error('No existe ese libro.');
+    if (this.busy(slug)) throw new Error('Este libro ya se está procesando o subiendo. Espera a que termine.');
+    if (book.textLayer === true) throw new Error('Este libro ya tiene texto: no hace falta OCR.');
+    const job: Job = { jobId: randomId(), kind: 'ocr', slug, title: book.title, filename: book.filename, status: 'RUNNING', phase: 'Reconociendo el texto (OCR)', progress: null, createdAt: new Date().toISOString() };
+    this.jobs = [job, ...this.jobs];
+    this.emit();
+    setTimeout(() => {
+      book.ocr = { engine, pages: book.pageCount, pagesWithText: book.pageCount, at: new Date().toISOString() };
+      this.jobs = this.jobs.map((candidate) => (candidate.jobId === job.jobId ? { ...candidate, status: 'DONE', phase: 'Terminado', progress: 1, finishedAt: new Date().toISOString() } : candidate));
+      this.emit();
+    }, this.stepMs);
+    return { jobId: job.jobId, estimatedCostUsd: engine === 'textract' ? 0.83 : 7.2 };
+  }
+
+  async getOcrPages(slug: string): Promise<string[] | null> {
+    const book = this.books.find((candidate) => candidate.slug === slug);
+    return book?.ocr ? Array.from({ length: book.pageCount }, (_, index) => `Texto reconocido de la página ${index + 1}.`) : null;
   }
 
   /** Arranca el análisis de un libro ya subido. Un libro a la vez: el resto espera en cola (en el backend real, por los límites de Lambda y de OpenAI). */

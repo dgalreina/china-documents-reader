@@ -16,9 +16,11 @@ interface PersonajesTabProps {
   onOpenBook: (slug: string) => void;
   analysis?: AnalysisState | null;
   onAnalyze?: () => void;
+  scanned?: boolean;
+  onOcr?: () => void;
 }
 
-export function PersonajesTab({ personajes, hitos, books, currentSlug, onGoTo, onOpenBook, analysis = null, onAnalyze }: PersonajesTabProps) {
+export function PersonajesTab({ personajes, hitos, books, currentSlug, onGoTo, onOpenBook, analysis = null, onAnalyze, scanned, onOcr }: PersonajesTabProps) {
   const [scope, setScope] = useState<BookScope>('todos');
   const titleOf = (slug: string) => books.find((book) => book.slug === slug)?.title ?? slug;
   const visible = useMemo(
@@ -26,7 +28,7 @@ export function PersonajesTab({ personajes, hitos, books, currentSlug, onGoTo, o
     [personajes, scope, currentSlug],
   );
 
-  if (personajes.length === 0) return <AnalysisNotice what="personajes" analysis={analysis} onAnalyze={onAnalyze} />;
+  if (personajes.length === 0) return <AnalysisNotice what="personajes" analysis={analysis} onAnalyze={onAnalyze} scanned={scanned} onOcr={onOcr} />;
 
   return (
     <div className="p-3">
@@ -34,7 +36,7 @@ export function PersonajesTab({ personajes, hitos, books, currentSlug, onGoTo, o
         <span className="text-stone">{visible.length} personajes</span>
         {books.length > 1 && <BookFilter value={scope} onChange={setScope} />}
       </div>
-      {visible.length === 0 && <AnalysisNotice what="personajes" analysis={analysis} onAnalyze={onAnalyze} />}
+      {visible.length === 0 && <AnalysisNotice what="personajes" analysis={analysis} onAnalyze={onAnalyze} scanned={scanned} onOcr={onOcr} />}
       <ul className="space-y-2">
         {visible.map((personaje) => {
           // Sus hitos: los de todos los libros, o solo los del abierto si se filtra.

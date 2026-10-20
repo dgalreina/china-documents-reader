@@ -162,6 +162,57 @@ describe('peticiones', () => {
   });
 });
 
+describe('OCR', () => {
+  it('el libro trae si es un escaneado y el OCR que se le hizo; un libro antiguo, ninguno de los dos', () => {
+    expect(mapBook({ slug: 'a', textLayer: false, ocr: { engine: 'openai', pages: 554, pagesWithText: 540, at: '2026-10-20T12:00:00Z' } })).toMatchObject({
+      textLayer: false, ocr: { engine: 'openai', pages: 554, pagesWithText: 540, at: '2026-10-20T12:00:00Z' },
+    });
+    const old = mapBook({ slug: 'viejo' });
+    expect(old.textLayer).toBeUndefined();
+    expect(old.ocr).toBeUndefined();
+    expect(mapBook({ slug: 'a', ocr: { engine: 'raro', pages: 3 } }).ocr?.engine).toBe('textract'); // un motor desconocido no rompe la lista
+  });
+
+  it('un trabajo de OCR se reconoce y tiene su propia fase', () => {
+    const job = mapJob({ jobId: 'j', kind: 'ocr', status: 'RUNNING', source: 'libro', createdAt: '2026-10-20T12:00:00Z' }, NOW);
+    expect(job.kind).toBe('ocr');
+    expect(job.phase).toMatch(/OCR/);
+  });
+
+  it('pedir el OCR manda el motor elegido y devuelve la estimación', async () => {
+    const server = fakeServer({ 'POST /books/mi-libro/ocr': () => ({ status: 202, body: { jobId: 'j1', engine: 'openai', estimatedCostUsd: 7.2 } }) });
+    const result = await makeApi(server).startOcr('mi-libro', 'openai');
+    expect(result).toEqual({ jobId: 'j1', estimatedCostUsd: 7.2 });
+    expect(JSON.parse(server.calls[0].body ?? '{}')).toEqual({ engine: 'openai' });
+  });
+
+  it('un 409 (ya hay algo en curso) llega con su motivo', async () => {
+    const server = fakeServer({ 'POST /books/mi-libro/ocr': () => ({ status: 409, body: { error: 'Este libro ya se está procesando o subiendo. Espera a que termine.' } }) });
+    await expect(makeApi(server).startOcr('mi-libro', 'textract')).rejects.toThrow(/ya se está procesando/);
+  });
+
+  it('el texto OCR se pide con una URL firmada, se baja una vez y se guarda', async () => {
+    const calls: string[] = [];
+    const fetchFn = (async (url: string) => {
+      calls.push(url);
+      if (url.startsWith('https://api.test/')) return new Response(JSON.stringify({ url: 'https://s3.test/books/mi-libro/ocr.json?firma' }), { status: 200 });
+      return new Response(JSON.stringify({ engine: 'textract', pages: ['uno', 'dos', 7] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const api = new HttpApi({ apiUrl: 'https://api.test', getToken: async () => 't', onUnauthorized: unauthorized, fetchFn });
+    expect(await api.getOcrPages('mi-libro', 'v1')).toEqual(['uno', 'dos', '']); // lo que no es texto queda vacío
+    await api.getOcrPages('mi-libro', 'v1');
+    expect(calls.length).toBe(2); // la segunda vez, de la memoria
+    await api.getOcrPages('mi-libro', 'v2'); // se repitió el OCR: otra versión, se vuelve a pedir
+    expect(calls.length).toBe(4);
+  });
+
+  it('si el texto no se puede leer, rechaza con un mensaje (la web sigue sin ese texto)', async () => {
+    const fetchFn = (async (url: string) => (url.startsWith('https://api.test/') ? new Response(JSON.stringify({ url: 'https://s3.test/x' }), { status: 200 }) : new Response('no', { status: 403 }))) as unknown as typeof fetch;
+    const api = new HttpApi({ apiUrl: 'https://api.test', getToken: async () => 't', onUnauthorized: unauthorized, fetchFn });
+    await expect(api.getOcrPages('mi-libro')).rejects.toThrow(/No se pudo leer el texto/);
+  });
+});
+
 describe('agente (streaming)', () => {
   const ASK_URL = 'https://ask.test';
   const request = { slug: 'libro-a', question: '¿Quién fue el rey Wu?', history: [{ role: 'user' as const, text: 'hola' }] };

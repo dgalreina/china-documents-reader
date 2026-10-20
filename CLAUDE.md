@@ -243,6 +243,16 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   al azar ('novela'). Ahora una pregunta general NO busca por parecido: si el libro cabe en `ASK_FULL_BOOK_CHARS` (100.000 caracteres ≈ 25.000 tokens ≈ 0,06 USD/pregunta) se lee ENTERO; si no, el comienzo
   (3 fragmentos) y 7 repartidos por el resto. Un resumen de verdad de un libro de 800 paginas pediria un resumen precalculado en el analisis (idea, no hecho). Si el paso previo falla, se busca como antes.
 
+  **OCR de libros escaneados (hecho, probado con servicios falsos y la maquina de estados validada, sin desplegar):** un PDF sin texto (todo imagenes, p. ej. 'Records of the Grand Historian', 554 pags., CCITT 1 bit) no
+  se puede traducir, leer en ingles ni analizar. `ingest` marca `textLayer: false` en el catalogo si ninguna de ~8 paginas repartidas tiene texto. Boton **Reconocer texto (OCR)** en Archivos (con estimacion y dos motores):
+  **Amazon Textract** por defecto (~0,0015 USD/pag.; ~0,83 USD el libro; ingles y lenguas europeas, NO chino) y **OpenAI vision** (gpt-4o, ~0,013 USD/pag.; lee chino) para libros casi todo chino.
+  Flujo: `POST /books/{slug}/ocr` (`lambdas/ocr`, `start_handler`) -> maquina `OcrPipeline` (Textract: `prepare` arranca el trabajo asincrono -> espera 20 s -> `check` -> `collect`; OpenAI: tandas de 8 pags., 5 en
+  paralelo, `pages` renderiza con pypdfium2 y transcribe) -> `finish` junta los trozos en `books/<slug>/ocr.json` ({engine, createdAt, pageCount, pages[]}), BORRA las traducciones del libro (las paginas sin texto se
+  habian traducido 'vacias') y apunta `ocr` en el catalogo. Quien usa el texto: `translate_page` (si la pagina no tiene texto propio, el OCR), `extract_chunk` (las paginas vacias toman el del OCR: el analisis y el
+  agente ya funcionan en escaneados), y el lector en ingles (`GET /books/{slug}/ocr-url`, el navegador baja el JSON una vez). Un OCR en marcha NO cuenta como analisis (`analysisState`). Repetir el OCR con el otro motor
+  esta en la tarjeta. IAM: Textract solo admite `*`; las Lambdas que lo llaman leen el PDF con su propio rol. Fallos arreglados de paso: el IndexedDB guardaba traducciones VACIAS (ahora no se guardan ni se leen) y el
+  ambito de las traducciones incluye la version del OCR. **Sin probar en AWS real:** Textract con este PDF (CCITT/ICC, 3024x4836) y la vision de OpenAI; se prueba tras desplegar.
+
 ## Ideas apuntadas (sin implementar)
 
 - **Libros escaneados / imagenes sueltas (para el FINAL, decidido con el usuario):** hoy un PDF sin texto acaba en `NEEDS_OCR`. Un solo paso de OCR por paginas
