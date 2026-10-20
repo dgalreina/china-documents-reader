@@ -118,7 +118,8 @@ export function AgentTab({ api, slug, books, analysis = null, onAnalyze, onGoTo 
       </div>
 
       <form
-        className="flex gap-2 border-t border-line p-3"
+        // En el móvil el campo queda más arriba: pegado al borde de abajo coincide con la barra de gestos del iPhone y cuesta tocarlo (como mínimo 1,75 rem, o la zona segura si es mayor).
+        className="flex gap-2 border-t border-line p-3 pb-[max(1.75rem,env(safe-area-inset-bottom))] md:pb-3"
         onSubmit={(event) => {
           event.preventDefault();
           send();

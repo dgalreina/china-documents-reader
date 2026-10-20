@@ -107,3 +107,5 @@ Puesta en marcha (una vez): `npm run deploy:ci` con `aws login`; variable de rep
 `AskFn` (`backend/ask/`, Node.js 22) responde en flujo desde su propia Function URL (`AskUrl` en las salidas; va también en `config.json` como `askUrl`). Es pública por diseño: la funcion comprueba el token
 de Cognito ella misma antes de escribir. `npm run build:ask` instala sus dependencias de produccion en `infra/build/ask`. Lee de SSM `OPENAI_API_KEY` y `MONGODB_URI_DEV` (o `_PROD` si `mongoTarget=prod`).
 Para desarrollar la web contra el: `node infra/scripts/write-front-config.mjs` ya incluye `askUrl` si el stack lo tiene.
+
+**Lecciones del CI:** (1) `aws-cdk` (la herramienta de línea de comandos) está fijado en `infra/package.json`: con `npx cdk` sin instalarla, npm baja el paquete `cdk` más reciente y un día falló porque su dependencia aún no estaba publicada. Al subir `aws-cdk-lib`, sube también `aws-cdk` (que sea de la misma época). (2) El paso del `cdk diff` NO lleva `|| true`: un fallo ahí se tomaba por "sin cambios delicados". El clasificador (`scripts/classify-diff.mjs`) trata cualquier salida que no reconozca como delicada.

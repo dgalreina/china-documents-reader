@@ -54,11 +54,12 @@ jobs:
           npm ci
           npx tsc --noEmit
           npm test
-      - name: Infra (tsc)
+      - name: Infra (tsc y clasificador de cambios)
         working-directory: infra
         run: |
           npm ci
           npm run build
+          node --test scripts/classify-diff.test.mjs
 
   plan:
     needs: test
@@ -98,7 +99,11 @@ jobs:
           aws-region: eu-west-1
       - name: Calcular cambios (cdk diff)
         working-directory: infra
-        run: npx cdk diff ChinaDocumentsStack --no-color > diff.txt 2>&1 || true
+        # Sin `|| true`: si cdk diff falla, el paso falla y se ve (antes un fallo se guardaba como un diff vacío y se tomaba por "sin cambios delicados"). `cdk` sale del proyecto
+        # (aws-cdk está fijado en infra/package.json), no de lo último que haya en npm. El resultado se enseña siempre en el registro, porque es lo que se revisa.
+        run: |
+          npx cdk diff ChinaDocumentsStack --no-color > diff.txt 2>&1 || { cat diff.txt; exit 1; }
+          cat diff.txt
       - name: Clasificar
         id: classify
         working-directory: infra
