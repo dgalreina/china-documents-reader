@@ -266,3 +266,34 @@ def test_mapbox_acepta_un_nombre_corto_si_el_resultado_se_llama_exactamente_igua
 def test_mapbox_sigue_aceptando_los_nombres_largos_con_un_sufijo():
     geo = Geocoder(mapbox_token="x", http_get=lambda url: mapbox_response("Henan", lat=34.7, lng=113.6, name="Zhengzhou City"))
     assert geo.geocode("Zhengzhou", "Henan").source == "mapbox"
+
+
+def test_la_precision_distingue_un_sitio_de_la_capital_de_un_estado():
+    from shared.geocoder import precision_of
+
+    assert precision_of("Pengcheng Xian") == "exacta"
+    assert precision_of("Chang'an (Q6501000): ancient capital and city of China") == "exacta"
+    assert precision_of("Xi'an, Shaanxi, People's Republic of China") == "exacta"
+    for label in ("State of Qi", "State of Zhou (dominio real)", "Chu (Q504759): Southern Chinese state (c. 1030-223 BCE)", "Kingdom of Wu"):
+        assert precision_of(label) == "aproximada", label
+    assert precision_of(None) == "exacta"
+
+
+def test_la_precision_depende_de_que_sitio_se_pidio_no_solo_de_como_se_llama_la_ficha():
+    from shared.geocoder import precision_of
+
+    # Se pidió la CIUDAD y la ficha curada se llama como el estado (es su capital): el punto es exacto.
+    assert precision_of("State of Qi", "Linzi") == "exacta"
+    assert precision_of("State of Zhou (dominio real)", "Luoyang") == "exacta"
+    # Se pidió el ESTADO y salió su capital: aproximado.
+    assert precision_of("State of Qi", "Qi") == "aproximada"
+    assert precision_of("Chu (Q504759): Southern Chinese state (c. 1030-223 BCE)", "Chu") == "aproximada"
+    assert precision_of("Chu (Q504759): Southern Chinese state (c. 1030-223 BCE)", "Ch'u") == "aproximada"  # la grafía con apóstrofo de Wade-Giles
+    assert precision_of("State of Qi", "Linzi") == "exacta"
+
+
+def test_geocode_devuelve_el_punto_marcado_con_su_precision(tmp_path):
+    write_chgis(tmp_path, [chgis_item("Qiantang Xian", 30.25, 120.17, -221, 600)])
+    geo = Geocoder(chgis_dir=tmp_path, mapbox_token="x", http_get=lambda url: {"features": [{"text": "Zhejiang"}]})
+    assert geo.geocode("Qiantang", "Zhejiang", 100, 200).precision == "exacta"
+

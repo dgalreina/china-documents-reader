@@ -20,7 +20,7 @@ import re
 import unicodedata
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -53,12 +53,36 @@ MAPBOX_SHORT_NAME_CHARS = 5  # nombres de hasta 5 letras: coincidencia exacta
 HttpGet = Callable[[str], dict]
 
 
+# Cuando el lugar que se resuelve es un ESTADO (el libro habla de lo que pasó "en Qi" y la fuente da la capital de Qi), el punto es una aproximación razonable pero no el
+# sitio exacto. No se descarta (una capital es mucho más específica que el centro de una provincia), pero se MARCA: así quien consulte puede decidir si fiarse.
+STATE_CAPITAL_LABEL = re.compile(r"\bstate of\b|\bstate\b|\bkingdom\b|dominio real|royal domain|principality|principado|\breino\b", re.IGNORECASE)
+
+PRECISION_SITE = "exacta"
+PRECISION_STATE_CAPITAL = "aproximada"  # (el nombre de la constante es histórico: es la precisión "aproximada")
+PRECISIONS = (PRECISION_SITE, PRECISION_STATE_CAPITAL)
+
+
+def precision_of(matched_name: str | None, site: str | None = None) -> str:
+    """'exacta' (un lugar concreto) o 'aproximada' (se pidió un ESTADO, p. ej. "Qi" o "Chu", y la fuente devolvió su ficha: el punto es su capital).
+
+    Hace falta saber QUÉ SITIO SE PIDIÓ: si se pidió "Linzi" y la ficha de la lista curada se llama "State of Qi" (porque es la capital de Qi), el punto es la ciudad exacta;
+    solo es aproximado si el nombre pedido es el del propio estado (el nombre pedido aparece en el de la ficha: "Qi" en "State of Qi").
+    """
+    if not STATE_CAPITAL_LABEL.search(matched_name or ""):
+        return PRECISION_SITE
+    if site is None:
+        return PRECISION_STATE_CAPITAL
+    wanted = normalize(site).replace(" ", "")  # sin espacios: "Ch'u" se normaliza a "ch u" y la ficha dice "Chu"
+    return PRECISION_STATE_CAPITAL if wanted and wanted in normalize(matched_name or "").replace(" ", "") else PRECISION_SITE
+
+
 @dataclass(frozen=True)
 class GeoResult:
     lat: float
     lng: float
     source: str  # "curated" | "chgis" | "wikidata" | "mapbox"
     matched_name: str
+    precision: str = PRECISION_SITE  # "exacta" | "aproximada" (ver arriba); la rellena `Geocoder.geocode`
 
 
 def normalize(name: str) -> str:
@@ -368,5 +392,7 @@ class Geocoder:
         )
         if result and not _in_china(result.lat, result.lng):
             result = None
+        if result:
+            result = replace(result, precision=precision_of(result.matched_name, site))
         self._cache[cache_key] = result
         return result

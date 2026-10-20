@@ -32,8 +32,10 @@ Objetivo: demostrar AWS serverless a recruiters. `china-history` se queda en Dig
 - **Ubicación del chunk (OPCIONAL, a petición de china-history):** si el sitio principal se resuelve con claridad, el chunk
   lleva `ubicacion` (GeoJSON Point `[lng, lat]`), `lat`, `lng` (números sueltos: el filtro de `$vectorSearch` admite
   rangos numéricos pero no operadores geoespaciales, así que prefiltran por caja), `ubicacionNombre`, `ubicacionFuente`
-  (`curated`/`chgis`/`mapbox`) y `ubicacionCoincidencia`. **Nunca una ubicación aproximada o genérica** (ni el centro de una
-  provincia): si no hay resultado claro, el chunk se guarda igual, sin ubicación. Los años siguen siendo obligatorios.
+  (`curated`/`chgis`/`mapbox`) y `ubicacionCoincidencia`. **Nunca una ubicación genérica** (ni el centro de una
+  provincia): si no hay resultado claro, el chunk se guarda igual, sin ubicación. **Excepción decidida con el usuario (20-oct-2026):** si el libro habla de un ESTADO y
+  la fuente devuelve su capital (se pidió "Chu" y salió su ficha), el punto se guarda pero MARCADO con `ubicacionPrecision: "aproximada"` (el resto: `"exacta"`);
+  campo extra y opcional que china-history puede ignorar o usar para fiarse menos. Si se pidió una CIUDAD (Linzi) es `"exacta"` aunque la ficha curada se llame "State of Qi". Los años siguen siendo obligatorios.
   Para usarla, china-history debe añadir `lat`/`lng` como campos *filter* de su índice vectorial y cambiar `buscarEnLibro`
   (eso lo hace su dueño; verificado en dev que el prefiltro por caja funciona).
 - Escritura en `book_chunks`: **upsert por `(source, chunkIndex)`**, para que reprocesar un PDF no duplique.
@@ -262,6 +264,19 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   nombres van con alias porque `total` y `unit` son palabras reservadas de DynamoDB). `GET /jobs` (`_progress`) calcula el % y el texto '3 de 13 tandas'; tope 0,99 (el 100 % es solo 'terminado'). Analisis: leer 2 %,
   etiquetar/embeddings 5-50 %, hitos 50-90 %, guardar 90-98 %. OCR: Textract no informa, asi que su barra se ESTIMA con el tiempo (0,4 s/pagina; una comprobacion cada 20 s); OpenAI avanza por tandas. Los costes
   se enseñan en EUROS (`formatCost`, cambio fijo `EUR_PER_USD` = 0,87; el backend sigue en dolares).
+
+  **Revision a mano del primer libro real (Records of the Grand Historian, 28 hitos / 19 personajes) y lo que salio (arreglado):** de 28 hitos, 5 tenian el ANO mal (el modelo convertia mal 'el segundo ano de Han'; errores
+  de 10-15 anos: Han-tan -221 en vez de -207, Linzi -219 en vez de -204...), 1 no tenia fecha fiable (se borro), y habia 3 fallos de personajes: 'Dinastia Qin' como persona, 'Rey de Han' (= Liu Bang/Gaozu) partido en dos fichas, y
+  dos 'Han Xin' distintos (el general y el rey de Han, 韩王信) UNIDOS en una (la regla 'mismo nombre + epoca + estado = misma persona' no preguntaba al juez). Datos corregidos en dev (27 hitos, 17 personajes; ids recalculados con el
+  algoritmo del contrato al cambiar el ano). Codigo: (1) `resolve_personajes` solo une sin juez si la mencion NO trae nombres nuevos; el juez ve el hecho y la frase del libro; (2) el prompt de hitos pide fechas del texto, avisa del
+  periodo del fragmento (`extract_group(..., year_range)`) y pide NO extraer un hito si no se puede fijar el ano; (3) `clean_personaje` rechaza estados/dinastias/ejercitos como personas (salvo con titulo: 'First Emperor of the Qin dynasty');
+  el prompt pide identificar los titulos sueltos ('el rey de Han') por su nombre. LECCION: revisar a mano una muestra de hitos y personajes de cada libro nuevo; las metricas no ven un ano 15 anos corrido.
+
+  **Auditoria de la base vectorial de dev (20-oct-2026):** 1.041 fragmentos (968 Records + 73 Palace Women): contrato OK (vectores de 1536 normalizados, años y paginas validos, sin duplicados salvo 1 por el solape). Los 260 huecos
+  de chunkIndex de Records son los descartados por no tener año fiable (portada, notas, bibliografia). Ubicaciones (119 de 1.041): corregidas Kuaiji (3, apuntaba a una montaña: ubicacion quitada) y Chang'an (31, el punto de Mapbox era el
+  distrito moderno, ~17 km del sitio Han: unificado en el de Wikidata); 6 fragmentos de Chu quedan marcados `aproximada`. LECCION: mi primera cuenta ('24 de nivel de estado') estaba mal: 18 eran la CIUDAD pedida (Linzi,
+  Luoyang) con una ficha curada llamada 'State of Qi/Zhou'; la precision depende de que sitio se pidio (`precision_of(matched, site)`), no solo del nombre de la ficha. El tool de terminal se come las barras invertidas: los
+  scripts con regex (``) se escriben con el Write tool, o el `` acaba siendo un caracter de retroceso invisible (ya paso dos veces).
 
 ## Ideas apuntadas (sin implementar)
 

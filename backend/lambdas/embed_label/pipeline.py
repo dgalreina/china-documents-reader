@@ -119,6 +119,7 @@ def embed_and_label(
                 doc["ubicacionNombre"] = label.site
                 doc["ubicacionFuente"] = geo.source
                 doc["ubicacionCoincidencia"] = geo.matched_name  # cómo se llama el sitio en la fuente (auditoría)
+                doc["ubicacionPrecision"] = geo.precision  # "exacta" o "aproximada" (un estado entero resuelto a su zona central: guardada, pero marcada)
                 result.geo_sources[geo.source] += 1
             else:
                 result.geo_unresolved[(label.site, label.province)] += 1

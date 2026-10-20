@@ -230,3 +230,36 @@ def test_el_hito_trae_sus_personajes_validados_en__personajes():
     )
     (h,) = run([texts_hito]).hitos
     assert [p["nombre_en"] for p in h["_personajes"]] == ["King Wu of Zhou"]
+
+
+# --- personas que no son personas, y el periodo que se le pasa al modelo ---
+
+
+def test_un_estado_o_una_dinastia_no_es_un_personaje():
+    for nombre, nombre_en in [("Dinastía Qin", "Qin Dynasty"), ("Estado de Chu", "State of Chu"), ("Ejército de Han", "Han Army"), ("Qin dynasty", "Qin dynasty")]:
+        clean, reason = clean_personaje(persona(nombre=nombre, nombre_en=nombre_en), HITO_TEXTS, SOURCE)
+        assert clean is None and reason == "personaje_no_es_una_persona", nombre
+
+
+def test_una_persona_cuyo_nombre_menciona_una_dinastia_no_se_rechaza():
+    clean, reason = clean_personaje(persona(nombre="Primer Emperador de la dinastía Qin", nombre_en="First Emperor of the Qin dynasty"), HITO_TEXTS, SOURCE)
+    assert reason != "personaje_no_es_una_persona"
+
+
+def test_el_periodo_de_los_fragmentos_llega_al_modelo_y_sin_periodo_no_se_inventa():
+    from lambdas.extract_hitos.extractor import extract_group
+
+    class Recorder:
+        def __init__(self):
+            self.messages = []
+            self.chat = type("C", (), {"completions": type("K", (), {"parse": lambda s, **kw: self._parse(**kw)})()})()
+
+        def _parse(self, **kwargs):
+            self.messages.append(kwargs["messages"][1]["content"])
+            return type("R", (), {"choices": [type("Ch", (), {"message": type("M", (), {"parsed": HitosBatch(hitos=[])})()})()]})()
+
+    recorder = Recorder()
+    extract_group(recorder, "m", ["texto"], (-209, -202))
+    extract_group(recorder, "m", ["texto"])
+    assert "de -209 a -202" in recorder.messages[0] and "Periodo aproximado" not in recorder.messages[1]
+

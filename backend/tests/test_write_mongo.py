@@ -214,3 +214,12 @@ def test_enlace_a_personaje_invalido_en_un_hito_se_rechaza():
     for malo in ({**bueno, "id": "mal"}, {**bueno, "menciones": {}}, {**bueno, "rol": ""}):
         with pytest.raises(ContractError):
             build_hito_operations("mi-libro", [hito_doc(personajes=[malo])])
+
+
+def test_la_precision_de_la_ubicacion_es_opcional_y_solo_admite_exacta_o_aproximada():
+    build_operations("x", [doc(0, **loc(ubicacionPrecision="exacta"))])
+    build_operations("x", [doc(0, **loc(ubicacionPrecision="aproximada"))])
+    build_operations("x", [doc(0, **loc())])  # los fragmentos antiguos no la traen
+    with pytest.raises(ContractError):
+        build_operations("x", [doc(0, **loc(ubicacionPrecision="capital_del_estado"))])  # los valores antiguos ya no valen
+

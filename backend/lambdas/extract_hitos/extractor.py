@@ -114,9 +114,31 @@ SYSTEM_PROMPT = (
     "Para cada hito indica también los personajes históricos con nombre propio que intervienen, con su papel en ese hecho. "
     "Cada personaje lleva su mención EXACTA tal como aparece escrita en tu titulo o descripcion de cada idioma, para poder "
     "enlazarla en el texto. Los años de nacimiento y muerte solo si el texto los dice.\n\n"
+    "FECHAS: el año de un hito sale del TEXTO. Si el texto da un año de reinado o de era ('en el segundo año de Han', 'el tercer año del Segundo Emperador') conviértelo "
+    "con cuidado a año a.C. (la era Han empieza en 206 a.C.; el Segundo Emperador de Qin reinó 210-207 a.C.); si lo da entre corchetes ([196 B.C.]), usa ese. Los fragmentos "
+    "vienen con el periodo aproximado del que tratan: el hito debe caer dentro o muy cerca de ese periodo, salvo que el propio texto date un hecho PASADO (un recuerdo o un "
+    "antecedente). Si no puedes fijar el año con seguridad, NO extraigas el hito: un año inventado es peor que un hito menos.\n\n"
+    "PERSONAJES: solo PERSONAS concretas. Nunca un estado, una dinastía, un ejército, un pueblo ni una institución (nada de 'Dinastía Qin' ni 'el ejército de Chu'). Si el texto "
+    "nombra a alguien solo por su título ('el rey de Han', 'el emperador'), identifícalo por su nombre según el contexto y la fecha (en 205 a.C. 'el rey de Han' es Liu Bang, "
+    "después el emperador Gaozu); si no puedes saber quién es, no lo incluyas. Dos personas distintas con el mismo nombre (hay dos 'Han Xin') van como personas distintas: "
+    "usa el nombre COMPLETO con su título para distinguirlas ('Han Xin, marqués de Huaiyin' / 'Han Xin, rey de Han').\n\n"
     "Años a.C. en negativo (221 a.C. = -221). Da cada hito en español (campos base), en inglés (_en) y en chino "
     "simplificado (_zh); usa los nombres de lugar chinos con sus caracteres correctos en _zh."
 )
+
+# Un personaje que en realidad es un estado, una dinastía, un ejército o un pueblo (no una persona). El prompt ya lo pide, pero el modelo lo hizo ('Dinastía Qin'):
+# esta es la red de seguridad en código. Solo cuenta al principio o al final del nombre, para no rechazar a 'Primer Emperador de la dinastía Qin'.
+NOT_A_PERSON = re.compile(
+    r"^(dinast[ií]a|dynasty|estado|state|reino|kingdom|ej[eé]rcito|army|pueblo|people|imperio|empire)\b|\b(dynasty|dinast[ií]a|army|ej[eé]rcito|state|kingdom|empire)$",
+    re.IGNORECASE,
+)
+# Un nombre con título ('First Emperor of the Qin dynasty', 'Duque de Zhou') es una persona aunque mencione una dinastía.
+HAS_TITLE = re.compile(r"\b(emperor|empress|king|queen|duke|marquis|prince|princess|lord|general|chancellor|emperador|emperatriz|rey|reina|duque|marqu[eé]s|pr[ií]ncipe|princesa|se[ñn]or|canciller)\b", re.IGNORECASE)
+
+
+def is_not_a_person(name: str) -> bool:
+    name = name.strip()
+    return not HAS_TITLE.search(name) and bool(NOT_A_PERSON.search(name))
 
 
 def year_in_range(year: int, year_from: int, year_to: int) -> bool:
@@ -205,6 +227,8 @@ def clean_personaje(p: ExtractedPersonaje, hito_texts: dict[str, str], group_tex
     """(personaje validado, None) o (None, motivo). Solo se conserva lo que se puede comprobar en el texto."""
     if not p.nombre.strip() or not p.nombre_en.strip() or not p.rol.strip() or not p.descripcion.strip():
         return None, "personaje_campos_vacios"
+    if is_not_a_person(p.nombre) or is_not_a_person(p.nombre_en):
+        return None, "personaje_no_es_una_persona"
     # Anti-invención: el nombre debe estar de verdad en el texto original de los fragmentos.
     flat_source = "".join(_tokens(group_text))
     wanted = "".join(_tokens(p.en_el_texto))
@@ -236,9 +260,12 @@ def has_cjk(text: str | None) -> bool:
     return bool(text and CJK.search(text))
 
 
-def extract_group(client: OpenAI, model: str, texts: list[str]) -> list[ExtractedHito]:
-    """Hitos de un grupo de chunks (sin validar años ni geocodificar)."""
+def extract_group(client: OpenAI, model: str, texts: list[str], year_range: tuple[int, int] | None = None) -> list[ExtractedHito]:
+    """Hitos de un grupo de chunks (sin validar años ni geocodificar). `year_range`: el periodo (años, a.C. en negativo) que el análisis asignó a estos fragmentos: se lo
+    decimos al modelo para que no se vaya de fechas (le salían años 10-15 antes de los hechos al convertir 'el segundo año de Han')."""
     body = "\n\n".join(f"--- Fragmento {i} ---\n{text}" for i, text in enumerate(texts, start=1))
+    if year_range:
+        body = f"Periodo aproximado de estos fragmentos: de {year_range[0]} a {year_range[1]} (años; a.C. en negativo).\n\n{body}"
     completion = client.chat.completions.parse(
         model=model,
         messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": body}],

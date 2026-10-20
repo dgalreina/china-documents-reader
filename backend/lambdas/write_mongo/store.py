@@ -95,8 +95,13 @@ def validate_doc(doc: dict) -> None:
 LOCATION_FIELDS = ("ubicacion", "lat", "lng", "ubicacionNombre", "ubicacionFuente")
 
 
+LOCATION_PRECISIONS = ("exacta", "aproximada")
+
+
 def validate_location(doc: dict, where: str) -> None:
-    """La ubicación es OPCIONAL, pero si está debe estar completa y ser coherente."""
+    """La ubicación es OPCIONAL, pero si está debe estar completa y ser coherente. `ubicacionPrecision` (opcional): "exacta" o "aproximada"."""
+    if doc.get("ubicacionPrecision") is not None and doc["ubicacionPrecision"] not in LOCATION_PRECISIONS:
+        raise ContractError(f"{where}: ubicacionPrecision debe ser una de {LOCATION_PRECISIONS}")
     present = [f for f in LOCATION_FIELDS if doc.get(f) is not None]
     if not present:
         return

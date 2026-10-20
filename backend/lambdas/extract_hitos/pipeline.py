@@ -63,7 +63,7 @@ def extract_hitos(
         year_from = min(c["añoInicio"] for c in group)
         year_to = max(c["añoFin"] for c in group)
         try:
-            extracted = extract_group(client, model, [c["text"] for c in group])
+            extracted = extract_group(client, model, [c["text"] for c in group], (year_from, year_to))
         except Exception:  # noqa: BLE001 — un grupo malo no debe tumbar el libro
             result.stats["grupo_con_error"] += 1
             continue
@@ -110,6 +110,7 @@ def extract_hitos(
                 "origen": ORIGIN,
                 "ubicacionFuente": geo.source,
                 "ubicacionCoincidencia": geo.matched_name,
+                "ubicacionPrecision": geo.precision,
                 # La frase del libro que respalda el hecho: sirve para auditar el hito y, más adelante, para resaltarla en el visor.
                 "evidencia": " ".join(hito.evidencia.split())[:MAX_EVIDENCE_CHARS],
             }

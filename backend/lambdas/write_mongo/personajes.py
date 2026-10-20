@@ -35,8 +35,9 @@ class SamePerson(BaseModel):
 
 JUDGE_PROMPT = (
     "Decides si dos fichas de personajes históricos de China corresponden a la MISMA persona. Fíjate en los nombres y alias, "
-    "la época, el estado o dinastía y el papel. Hay muchos homónimos (varios 'rey Wu', 'duque Wen', 'emperador Wu'): si la época, "
-    "el estado o el papel no encajan, son personas DISTINTAS. Ante cualquier duda razonable, responde que son distintas."
+    "la época, el estado o dinastía y el papel. Hay muchos homónimos (varios 'rey Wu', 'duque Wen', 'emperador Wu', y dos 'Han Xin'): si la época, "
+    "el estado o el papel no encajan, son personas DISTINTAS. Un título distinto (p. ej. 'marqués de Huaiyin' frente a 'rey de Han') o una grafía distinta del mismo nombre en el libro "
+    "('Han Hsin' frente a 'Hann Hsin') son indicios de personas DISTINTAS. Ante cualquier duda razonable, responde que son distintas."
 )
 
 
@@ -102,6 +103,7 @@ def _brief(p: dict) -> str:
     return (
         f"Nombre: {p.get('nombre_en')} / {p.get('nombre')} / {p.get('nombre_zh')}\nAlias: {', '.join(p.get('alias') or [])}\n"
         f"Estado o dinastía: {p.get('estado_en')}\nPapel: {p.get('rol_en')}\nVida: {life} {activity}\nDescripción: {p.get('descripcion_en')}"
+        + (f"\nHecho en el que sale ahora (con la frase del libro): {p['_contexto']}" if p.get("_contexto") else "")
     )
 
 
@@ -201,9 +203,14 @@ def resolve_personajes(
             for cand in candidates(p, year):
                 same_name = norm_name(p["nombre_en"]) == norm_name(cand.get("nombre_en", ""))
                 key = (norm_name(p["nombre_en"]), cand["id"])
-                if same_name and _state_compatible(p, cand):
-                    match, why = cand, "nombre canónico igual, época y estado compatibles"
+                # Unir SIN preguntar al juez solo si el nombre, la época y el estado encajan Y la mención no trae ninguna forma de nombre que la ficha no conozca ya. Dos homónimos
+                # de la misma época y estado (p. ej. Han Xin, el general, y Han Xin, el rey de Han) pasaban esa regla antes y acababan en una sola ficha; si el libro los escribe
+                # distinto ("Han Hsin" / "Hann Hsin"), esa forma nueva es la señal para preguntar. Ante la duda el juez dice "distintas" (mezclar es peor que partir).
+                new_forms = name_forms(p) - set(cand.get("aliasNorm", []))
+                if same_name and _state_compatible(p, cand) and not new_forms:
+                    match, why = cand, "nombre canónico igual, época y estado compatibles, sin nombres nuevos"
                 else:
+                    p.setdefault("_contexto", f"{hito.get('titulo', '')} ({year}): {hito.get('evidencia') or ''}".strip())
                     if key not in cache:
                         verdict = judge_fn(p, cand)
                         cache[key] = verdict.misma_persona

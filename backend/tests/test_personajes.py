@@ -121,14 +121,14 @@ def test_el_veredicto_del_juez_se_reutiliza_para_la_misma_pareja():
 
 def test_una_ficha_de_otro_origen_se_enlaza_pero_no_se_modifica_ni_se_escribe():
     ajena = ficha(origen="china-history")
-    r = resolver([hito(personajes=[persona(alias=("Fa", "Ji Fa", "otro alias"))])], base=Base([ajena]))
+    r = resolver([hito(personajes=[persona(alias=("Fa", "Ji Fa", "otro alias"))])], base=Base([ajena]), juez=Juez(veredicto=True))  # un alias nuevo: lo confirma el juez
     assert r.hitos[0]["personajes"][0]["id"] == ajena["id"] and r.docs == []
     assert "otro alias" not in str(ajena)
 
 
 def test_la_fusion_anade_alias_rellena_huecos_y_no_pisa_lo_que_ya_habia():
     existente = ficha(nacimiento=-1087)
-    r = resolver([hito(personajes=[persona(alias=("Fa", "alias nuevo"), nacimiento=-1100, muerte=-1043, estado="otro estado")])], base=Base([existente]))
+    r = resolver([hito(personajes=[persona(alias=("Fa", "alias nuevo"), nacimiento=-1100, muerte=-1043, estado="otro estado")])], base=Base([existente]), juez=Juez(veredicto=True))  # un alias nuevo: lo confirma el juez
     (doc,) = r.docs
     assert "alias nuevo" in doc["aliases"]["en"] and doc["nacimiento"] == -1087 and doc["muerte"] == -1043  # no pisa el nacimiento
     assert doc["fuentes"] == ["otro", "libro"] and doc["estado"] == "otro estado"  # rellena el hueco
@@ -156,3 +156,43 @@ def test_tras_una_fusion_los_nombres_canonicos_siguen_sin_cruzarse():
     (doc,) = r.docs
     assert "King Wu of Zhou" not in doc["aliases"]["es"] and "Rey Wu de Zhou" not in doc["aliases"]["en"]
     assert "alias nuevo" in doc["aliases"]["es"] and "alias nuevo" in doc["aliases"]["en"]
+
+
+def test_dos_homonimos_de_la_misma_epoca_y_estado_con_otra_grafia_pasan_por_el_juez_y_no_se_unen_solos():
+    # Han Xin, el general, y Han Xin, el rey de Han: mismo nombre canónico, misma época y estado; el libro los escribe "Han Hsin" y "Hann Hsin".
+    general = persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Han Hsin", "Marquis of Huaiyin"), estado_en="Han", rol_en="general")
+    rey = persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Hann Hsin",), estado_en="Han", rol_en="king of Han")
+    juez = Juez(veredicto=False)  # "ante la duda, distintas"
+    resultado = resolver([hito("h1", -204, [general]), hito("h2", -205, [rey])], juez=juez)
+    ids = {hito_["personajes"][0]["id"] for hito_ in resultado.hitos}
+    assert len(ids) == 2 and juez.llamadas == 1  # dos fichas, y el juez fue quien lo decidió
+    assert resultado.stats["personajes_nuevos"] == 2
+
+
+def test_el_juez_ve_el_hecho_y_la_frase_del_libro_de_la_mencion_nueva():
+    vistos = []
+
+    def juez(new, old):
+        vistos.append(new.get("_contexto", ""))
+        return SamePerson(misma_persona=False, motivo="x")
+
+    h2 = {**hito("h2", -205, [persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Hann Hsin",))]), "titulo": "Conquista de Yangcheng", "evidencia": "Hann Hsin invaded Hann"}
+    resolver([hito("h1", -204, [persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Han Hsin",))]), h2], juez=juez)
+    assert vistos and "Conquista de Yangcheng" in vistos[0] and "Hann Hsin invaded Hann" in vistos[0]
+
+
+def test_la_misma_persona_con_las_mismas_formas_sigue_uniendose_sin_juez_aunque_salga_otras_veces():
+    juez = Juez()
+    g = persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Han Hsin",), estado_en="Han")
+    resultado = resolver([hito("h1", -204, [g]), hito("h2", -201, [g]), hito("h3", -196, [g])], juez=juez)
+    assert juez.llamadas == 0 and len({h_["personajes"][0]["id"] for h_ in resultado.hitos}) == 1
+
+
+def test_una_mencion_con_un_nombre_nuevo_que_el_juez_confirma_se_une_y_aprende_la_forma():
+    juez = Juez(veredicto=True)
+    primero = persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Han Hsin",), estado_en="Han")
+    despues = persona(nombre_en="Han Xin", nombre="Han Xin", alias=("Marqués de Huaiyin",), estado_en="Han")
+    resultado = resolver([hito("h1", -204, [primero]), hito("h2", -201, [despues])], juez=juez)
+    assert juez.llamadas == 1 and len({h_["personajes"][0]["id"] for h_ in resultado.hitos}) == 1
+    assert any("marquesdehuaiyin" in doc["aliasNorm"] for doc in resultado.docs)
+
