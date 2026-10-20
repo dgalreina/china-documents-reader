@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPercent, formatRange, formatUsd, formatYear } from './format';
+import { formatCost, formatPercent, formatRange, formatUsd, formatYear } from './format';
 
 describe('formatYear', () => {
   it('los años negativos son a. C. y los positivos d. C.', () => {
@@ -12,6 +12,17 @@ describe('formatRange', () => {
   it('un solo año si inicio y fin coinciden', () => {
     expect(formatRange(-1046, -1046)).toBe('1046 a. C.');
     expect(formatRange(-1046, -771)).toBe('1046 a. C. – 771 a. C.');
+  });
+});
+
+describe('formatCost (euros)', () => {
+  it('convierte los dólares del backend a euros, con coma decimal', () => {
+    expect(formatCost(4.26)).toBe('3,71 €'); // el análisis del libro de 554 páginas
+    expect(formatCost(0.83)).toBe('0,72 €');
+    expect(formatCost(0)).toBe('0,00 €');
+  });
+  it('por debajo de un céntimo, "< 0,01 €"', () => {
+    expect(formatCost(0.005)).toBe('< 0,01 €');
   });
 });
 

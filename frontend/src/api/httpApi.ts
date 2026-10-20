@@ -45,6 +45,10 @@ interface ServerJob {
   /** "upload" o "analysis"; los registros antiguos no lo traen y eran análisis. */
   kind?: string;
   status: string;
+  /** Solo en un trabajo EN MARCHA: la fase en la que va, su avance (0 a 1) y un detalle ("3 de 13 tandas"). Los apunta cada fase del flujo (ver backend/lambdas/jobs). */
+  phase?: string;
+  progress?: number;
+  detail?: string;
   filename?: string;
   source: string;
   title?: string;
@@ -171,13 +175,20 @@ export function mapPersonaje(person: ServerPersonaje): Personaje {
   };
 }
 
+/** El resumen del análisis trae los personajes como CONTADORES (`personajes_nuevos`: fichas creadas; `personajes_unidos`, `juez_llamadas`...): las fichas son `personajes_nuevos`. Un resumen antiguo (nombre -> menciones) cuenta sus nombres. */
+export function countPersonajes(people: Record<string, number> | undefined): number {
+  if (!people) return 0;
+  if ('personajes_nuevos' in people || 'personajes_unidos' in people) return num(people.personajes_nuevos);
+  return Object.keys(people).length;
+}
+
 function summaryStats(summary: ServerJob['summary']): BookStats | undefined {
   if (!summary) return undefined;
   return {
     chunks: num(summary.chunks),
     chunksListos: num(summary.chunksListos),
     hitos: num(summary.hitosEscritos),
-    personajes: Object.keys(summary.personajes ?? {}).length,
+    personajes: countPersonajes(summary.personajes),
     costeEstimadoUsd: num(summary.costeEstimadoUsd),
   };
 }
@@ -205,6 +216,7 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
   let error = job.error;
   let phase = PHASE[status];
   let progress: number | null = status === 'DONE' ? 1 : null;
+  let detail: string | undefined;
 
   if (status === 'UPLOADING') {
     if (local?.error) {
@@ -224,6 +236,12 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
 
   const kind: JobKind = job.kind === 'upload' ? 'upload' : job.kind === 'ocr' ? 'ocr' : 'analysis';
   if (kind === 'ocr' && status === 'RUNNING') phase = 'Reconociendo el texto (OCR)';
+  if (status === 'RUNNING') {
+    // Lo que dice el propio flujo manda sobre el texto genérico: la fase real y, si la hay, su avance (si no, la barra de "trabajando").
+    if (typeof job.phase === 'string' && job.phase.trim()) phase = job.phase;
+    if (typeof job.progress === 'number' && Number.isFinite(job.progress)) progress = Math.min(0.99, Math.max(0, job.progress));
+    if (typeof job.detail === 'string' && job.detail.trim()) detail = job.detail;
+  }
   return {
     jobId: job.jobId,
     kind,
@@ -232,6 +250,7 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
     filename: job.filename ?? '',
     status,
     phase,
+    detail,
     progress,
     error: cleanJobError(error),
     stats: summaryStats(job.summary),

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { OCR_ENGINE_NAME, estimateOcrCost } from '../lib/ocr';
-import { formatUsd } from '../lib/format';
+import { formatCost } from '../lib/format';
 import type { Book, OcrEngine } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -59,7 +59,7 @@ export function OcrDialog({ book, onConfirm, onClose }: OcrDialogProps) {
               <input type="radio" name="ocr-engine" value={option.engine} checked={engine === option.engine} onChange={() => setEngine(option.engine)} className="accent-[var(--color-seal)]" />
               <span className="font-semibold text-ink">{OCR_ENGINE_NAME[option.engine]}</span>
               <span className="ml-auto whitespace-nowrap text-xs font-semibold text-ink">
-                {book.pageCount > 0 ? `≈ ${formatUsd(estimateOcrCost(option.engine, book.pageCount))}` : ''}
+                {book.pageCount > 0 ? `≈ ${formatCost(estimateOcrCost(option.engine, book.pageCount))}` : ''}
               </span>
             </span>
             <span className="mt-1 block text-xs text-stone">{option.summary}</span>

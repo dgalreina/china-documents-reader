@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, HttpApi, cleanJobError, mapBook, mapHito, mapJob } from './httpApi';
+import { ApiError, HttpApi, cleanJobError, countPersonajes, mapBook, mapHito, mapJob } from './httpApi';
 import type { PresignedPost } from './s3Upload';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
@@ -174,6 +174,39 @@ describe('cleanJobError', () => {
   });
   it('un JSON roto no revienta: se enseña recortado', () => {
     expect(cleanJobError('Error: {no es json')).toBe('Error: {no es json');
+  });
+});
+
+describe('personajes del resumen de un análisis', () => {
+  it('cuenta las fichas nuevas, no las claves del conjunto de contadores (salía siempre 3)', () => {
+    expect(countPersonajes({ personajes_nuevos: 18, juez_llamadas: 12, personajes_unidos: 16 })).toBe(18);
+    expect(countPersonajes({ personajes_nuevos: 0, personajes_unidos: 4 })).toBe(0);
+    expect(countPersonajes({ 'Rey Wu': 1, 'Rey Cheng': 2 })).toBe(2); // formato antiguo
+    expect(countPersonajes(undefined)).toBe(0);
+  });
+});
+
+describe('avance de un trabajo en marcha', () => {
+  const base = { jobId: 'j', kind: 'analysis', status: 'RUNNING', source: 'libro', createdAt: '2026-10-20T12:00:00Z' };
+
+  it('con fase y avance del servidor, los enseña (y el detalle)', () => {
+    const job = mapJob({ ...base, phase: 'Extrayendo hitos y personajes', progress: 0.62, detail: '4 de 13 tandas' }, NOW);
+    expect(job).toMatchObject({ phase: 'Extrayendo hitos y personajes', progress: 0.62, detail: '4 de 13 tandas' });
+  });
+
+  it('sin avance del servidor (un trabajo antiguo), la barra es la de "trabajando": progress null', () => {
+    const job = mapJob(base, NOW);
+    expect(job.progress).toBeNull();
+    expect(job.phase).toBe('Analizando el libro');
+    expect(job.detail).toBeUndefined();
+  });
+
+  it('el avance se acota entre 0 y 0,99: el 100 % es solo "terminado"; y un trabajo terminado manda sobre cualquier fase vieja', () => {
+    expect(mapJob({ ...base, progress: 1.4 }, NOW).progress).toBe(0.99);
+    expect(mapJob({ ...base, progress: -2 }, NOW).progress).toBe(0);
+    const done = mapJob({ ...base, status: 'DONE', phase: 'Extrayendo', progress: 0.5 }, NOW);
+    expect(done.progress).toBe(1);
+    expect(done.phase).toBe('Terminado');
   });
 });
 

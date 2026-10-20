@@ -214,7 +214,7 @@ class FakeTextract:
 def test_textract_arranca_sobre_el_pdf_de_s3_y_con_un_token_que_evita_cobrar_dos_veces():
     textract = FakeTextract()
     result = ocr.prepare_handler({"jobId": "j" * 40, "engine": "textract", "pdfBucket": "libros", "key": f"books/{SLUG}/original.pdf", "pageCount": 554}, textract=textract)
-    assert result == {"textractJobId": "t-123"}
+    assert result["textractJobId"] == "t-123" and result["total"] == 12  # ~12 comprobaciones de 20 s esperadas para 554 páginas
     sent = textract.started[0]
     assert sent["DocumentLocation"] == {"S3Object": {"Bucket": "libros", "Name": f"books/{SLUG}/original.pdf"}}
     assert len(sent["ClientRequestToken"]) <= 64
@@ -222,7 +222,7 @@ def test_textract_arranca_sobre_el_pdf_de_s3_y_con_un_token_que_evita_cobrar_dos
 
 def test_con_openai_las_tandas_cubren_todo_el_libro_sin_pasarse():
     result = ocr.prepare_handler({"jobId": "j", "engine": "openai", "pdfBucket": "libros", "key": "k", "pageCount": 554})
-    assert result["starts"][0] == 0 and result["starts"][-1] == 552 and len(result["starts"]) == 70  # 554 / 8 = 69,25 -> 70 tandas
+    assert result["starts"][0] == 0 and result["starts"][-1] == 552 and len(result["starts"]) == 70 and result["total"] == 70  # 554 / 8 = 69,25 -> 70 tandas
     assert ocr.prepare_handler({"jobId": "j", "engine": "openai", "pdfBucket": "x", "key": "k", "pageCount": 8})["starts"] == [0]
 
 

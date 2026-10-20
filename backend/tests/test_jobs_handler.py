@@ -84,3 +84,38 @@ def test_la_lista_se_acota_a_los_mas_recientes():
     items = [{"jobId": f"{i:032d}", "status": "DONE", "source": f"l{i}", "createdAt": f"2026-01-{i + 1:02d}T00:00:00Z"} for i in range(31)]
     body = json.loads(handler({}, jobs_table=ScanTable(items))["body"])
     assert len(body["jobs"]) == 30
+
+
+# --- avance por fases de un trabajo en marcha ---
+
+
+def running(**extra):
+    return {"jobId": JOB, "status": "RUNNING", "phase": "Etiquetando épocas y calculando embeddings", **extra}
+
+
+def body_of(item):
+    return json.loads(call(JOB, FakeTable(item))["body"])
+
+
+def test_dentro_de_una_fase_la_barra_avanza_con_las_tandas_hechas():
+    body = body_of(running(pBase=Decimal("0.05"), pSpan=Decimal("0.45"), done=Decimal("6"), total=Decimal("12"), unit="tandas"))
+    assert body["progress"] == pytest.approx(0.275) and body["detail"] == "6 de 12 tandas"
+    assert body["phase"] == "Etiquetando épocas y calculando embeddings"
+
+
+def test_al_empezar_la_fase_la_barra_esta_en_su_base_y_nunca_llega_a_100_antes_de_terminar():
+    assert body_of(running(pBase=Decimal("0.5"), pSpan=Decimal("0.4"), done=Decimal("0"), total=Decimal("13"), unit="tandas"))["progress"] == 0.5
+    # más comprobaciones de las previstas (Textract tardó más de lo estimado): se queda en el tope de la fase y como mucho en 0,99
+    over = body_of(running(pBase=Decimal("0.05"), pSpan=Decimal("0.94"), done=Decimal("40"), total=Decimal("12"), unit="comprobaciones"))
+    assert over["progress"] == 0.99 and over["detail"] == "12 de 12 comprobaciones"
+
+
+def test_una_fase_sin_total_se_queda_en_su_base_y_sin_detalle():
+    body = body_of(running(pBase=Decimal("0.02"), pSpan=Decimal("0"), done=Decimal("0"), total=Decimal("0")))
+    assert body["progress"] == 0.02 and "detail" not in body
+
+
+def test_un_trabajo_antiguo_o_ya_terminado_no_lleva_avance_inventado():
+    assert "progress" not in body_of({"jobId": JOB, "status": "RUNNING"})  # sin fases apuntadas: el front dibuja la barra "trabajando"
+    done = body_of({"jobId": JOB, "status": "DONE", "phase": "Etiquetando", "pBase": Decimal("0.5")})
+    assert "progress" not in done and "phase" not in done  # al terminar manda el estado, no la última fase

@@ -33,6 +33,19 @@ def _number(value) -> int | Decimal:
         return 0
 
 
+def count_personajes(people) -> int:
+    """Cuántos personajes (fichas) salieron del análisis. El resumen los trae como CONTADORES (`personajes_nuevos`, `personajes_unidos`, `juez_llamadas`): el número de fichas nuevas es
+    `personajes_nuevos`. (Antes se contaban las CLAVES del conjunto y salía siempre 3.) Un resumen antiguo, que traía un diccionario nombre -> menciones, cuenta sus nombres."""
+    if not isinstance(people, dict) or not people:
+        return 0
+    if "personajes_nuevos" in people or "personajes_unidos" in people:
+        try:
+            return int(people.get("personajes_nuevos", 0))
+        except (TypeError, ValueError):
+            return 0
+    return len(people)
+
+
 def stats_from_summary(summary: dict | None) -> dict:
     summary = summary or {}
     return {
@@ -40,7 +53,7 @@ def stats_from_summary(summary: dict | None) -> dict:
         "chunksListos": _number(summary.get("chunksListos", 0)),
         "chunksPendientes": _number(summary.get("chunksPendientes", 0)),
         "hitos": _number(summary.get("hitosEscritos", 0)),
-        "personajes": len(summary.get("personajes") or {}),
+        "personajes": count_personajes(summary.get("personajes")),
         "costeEstimadoUsd": _number(summary.get("costeEstimadoUsd", 0)),
     }
 

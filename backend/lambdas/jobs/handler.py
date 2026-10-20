@@ -33,8 +33,34 @@ def _response(status: int, body: dict) -> dict:
     return {"statusCode": status, "headers": HEADERS, "body": json.dumps(body, ensure_ascii=False, default=_json_default)}
 
 
+def _progress(item: dict) -> tuple[float | None, str | None]:
+    """(avance 0-1, detalle) de un trabajo EN MARCHA, a partir de lo que apuntan las fases de la máquina de estados:
+
+      pBase  = dónde empieza la fase en la barra (0-1)          pSpan = cuánto ocupa la fase en la barra
+      done   = tandas (o comprobaciones) hechas en la fase       total = tandas previstas (0 = no se sabe)
+      unit   = cómo se llaman ("tandas"), para el texto "3 de 13 tandas"
+
+    Dentro de una fase la barra avanza con done/total; el 0,99 es tope: el 100 % es solo "terminado". Sin `pBase` (trabajos antiguos o aún sin fase) no hay avance: None.
+    """
+    if "pBase" not in item:
+        return None, None
+    base, span = float(item.get("pBase") or 0), float(item.get("pSpan") or 0)
+    done, total = float(item.get("done") or 0), float(item.get("total") or 0)
+    fraction = base + span * min(1.0, done / total) if total > 0 and span > 0 else base
+    detail = f"{int(min(done, total))} de {int(total)} {item.get('unit') or 'tandas'}" if total > 0 and item.get("unit") else None
+    return round(min(fraction, 0.99), 3), detail
+
+
 def _public(item: dict) -> dict:
     body = {key: item[key] for key in PUBLIC_FIELDS if key in item}
+    if item.get("status") == "RUNNING":
+        if item.get("phase"):
+            body["phase"] = item["phase"]
+        progress, detail = _progress(item)
+        if progress is not None:
+            body["progress"] = progress
+        if detail:
+            body["detail"] = detail
     if item.get("summary"):  # Step Functions lo guarda como texto JSON
         try:
             body["summary"] = json.loads(item["summary"])

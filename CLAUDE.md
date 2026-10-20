@@ -257,6 +257,12 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   texto en ingles repintaba las 554 paginas (~5.000 elementos). Ahora `ReaderPage` y `PdfPage` van en `memo` con props estables y las paginas lejanas (>8) sin traducir son un hueco vacio de la misma altura
   (1 de 803 fotogramas lento, 0 s; 946 elementos). Regla: en listas de cientos de paginas, memo + sin contenido lejos de la que se lee; medir con puppeteer + `Emulation.setCPUThrottlingRate`.
 
+  **Avance real de los trabajos (hecho, sin desplegar):** antes la barra del analisis y del OCR era un relleno de 1/3 que parpadeaba (el backend no informaba de nada) y parecia atascada. Ahora cada fase de las dos
+  maquinas de estados apunta en el registro del trabajo `phase`, `pBase`/`pSpan` (donde empieza y cuanto ocupa en la barra), `total`/`unit` (tandas previstas) y cada tanda suma 1 a `done` (`markPhase`/`bumpDone` en el CDK; los
+  nombres van con alias porque `total` y `unit` son palabras reservadas de DynamoDB). `GET /jobs` (`_progress`) calcula el % y el texto '3 de 13 tandas'; tope 0,99 (el 100 % es solo 'terminado'). Analisis: leer 2 %,
+  etiquetar/embeddings 5-50 %, hitos 50-90 %, guardar 90-98 %. OCR: Textract no informa, asi que su barra se ESTIMA con el tiempo (0,4 s/pagina; una comprobacion cada 20 s); OpenAI avanza por tandas. Los costes
+  se enseñan en EUROS (`formatCost`, cambio fijo `EUR_PER_USD` = 0,87; el backend sigue en dolares).
+
 ## Ideas apuntadas (sin implementar)
 
 - **Libros escaneados / imagenes sueltas (para el FINAL, decidido con el usuario):** hoy un PDF sin texto acaba en `NEEDS_OCR`. Un solo paso de OCR por paginas

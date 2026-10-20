@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { analysisState, estimateAnalysisCost } from '../lib/analysis';
-import { formatUsd } from '../lib/format';
+import { formatCost } from '../lib/format';
 import type { Book, Job } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -39,8 +39,8 @@ export function AnalyzeDialog({ book, jobs, onConfirm, onClose }: AnalyzeDialogP
       <p>Se extraerán del libro sus hitos (hechos con lugar y fecha) y sus personajes.</p>
       <p>
         Coste estimado:{' '}
-        <span className="font-semibold text-ink">{book.pageCount > 0 ? `unos ${formatUsd(cost)}` : 'unos 0,01 $ por página'}</span>
-        {book.pageCount > 0 && <> ({book.pageCount} págs. × 0,01 $)</>}. Es una estimación: depende de cuánto texto haya.
+        <span className="font-semibold text-ink">{book.pageCount > 0 ? `unos ${formatCost(cost)}` : 'unos 0,01 € por página'}</span>
+        {book.pageCount > 0 && <> ({book.pageCount} págs. × 0,01 €)</>}. Es una estimación: depende de cuánto texto haya.
       </p>
       {again && <p>Se reemplazará el análisis anterior.</p>}
       <p className="text-stone">Tarda unos minutos y mientras tanto puedes seguir leyendo y traduciendo.</p>

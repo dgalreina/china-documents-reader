@@ -83,3 +83,13 @@ def test_rechaza_nombres_de_libro_peligrosos(source):
 def test_sin_tabla_configurada_no_hace_nada(monkeypatch):
     monkeypatch.delenv("BOOKS_TABLE", raising=False)
     assert handler(EVENT) == {"catalogued": False}
+
+
+def test_los_personajes_se_cuentan_por_fichas_nuevas_no_por_las_claves_del_resumen():
+    # El resumen real de Finalize trae contadores: 18 fichas nuevas (no "3 personajes", que son las 3 claves del conjunto).
+    real = {"personajes": {"personajes_nuevos": 18, "juez_llamadas": 12, "personajes_unidos": 16}}
+    assert stats_from_summary(real)["personajes"] == 18
+    assert stats_from_summary({"personajes": {"personajes_nuevos": 0, "personajes_unidos": 4}})["personajes"] == 0  # todo eran personajes ya conocidos
+    assert stats_from_summary({"personajes": {"Rey Wu": 1, "Rey Cheng": 2}})["personajes"] == 2  # formato antiguo: nombre -> menciones
+    assert stats_from_summary({"personajes": None})["personajes"] == 0
+

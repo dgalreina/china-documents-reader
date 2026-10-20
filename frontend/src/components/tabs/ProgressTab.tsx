@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatPercent, formatUsd } from '../../lib/format';
+import { formatCost, formatPercent } from '../../lib/format';
 import { RECENT_UPLOAD_MS, finishedRecently } from '../../lib/uploads';
 import type { Book, Job } from '../../types';
 import { Cover } from '../Cover';
@@ -123,7 +123,7 @@ function JobCard({ job, title, coverUrl, onSelect }: { job: Job; title: string; 
       {job.status === 'DONE' && job.stats && (
         <p className="mt-1 text-stone">
           {job.stats.chunksListos} de {job.stats.chunks} fragmentos guardados · {job.stats.hitos} hitos · {job.stats.personajes} personajes · coste estimado{' '}
-          {formatUsd(job.stats.costeEstimadoUsd)}
+          {formatCost(job.stats.costeEstimadoUsd)}
         </p>
       )}
 

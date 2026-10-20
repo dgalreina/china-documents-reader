@@ -47,6 +47,15 @@ class OcrFailed(Exception):
     """El OCR no pudo hacerse (Textract lo rechazó, por ejemplo). El mensaje queda como motivo del trabajo."""
 
 
+CHECK_SECONDS = 20  # = la espera de la máquina de estados entre comprobaciones
+TEXTRACT_SECONDS_PER_PAGE = 0.4  # medido con un libro de 554 páginas (unos 3,5 min)
+
+
+def expected_checks(page_count: int) -> int:
+    """Cuántas comprobaciones se esperan hasta que Textract termine (para calcular el avance de la barra: es una ESTIMACIÓN, no un dato de Textract)."""
+    return max(1, round(page_count * TEXTRACT_SECONDS_PER_PAGE / CHECK_SECONDS) + 1)
+
+
 def textract_problem(error: Exception) -> str | None:
     """Un motivo en español para los fallos de Textract que el usuario puede entender y resolver; None si es otra cosa (entonces se deja el error técnico en los registros)."""
     code = getattr(error, "response", {}).get("Error", {}).get("Code")
@@ -169,8 +178,10 @@ def prepare_handler(event: dict, _context=None, textract=None) -> dict:
             if friendly:
                 raise OcrFailed(friendly) from error
             raise
-        return {"textractJobId": response["JobId"]}
-    return {"starts": list(range(0, int(event["pageCount"]), PAGES_PER_BATCH))}
+        # Textract no dice cuánto falta: la barra se estima con el tiempo (medido: ~0,4 s por página, y se pregunta cada 20 s -> una comprobación por ~50 páginas).
+        return {"textractJobId": response["JobId"], "total": expected_checks(int(event["pageCount"]))}
+    starts = list(range(0, int(event["pageCount"]), PAGES_PER_BATCH))
+    return {"starts": starts, "total": len(starts)}
 
 
 def check_handler(event: dict, _context=None, textract=None) -> dict:

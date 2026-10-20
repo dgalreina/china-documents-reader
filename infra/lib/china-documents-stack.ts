@@ -250,6 +250,37 @@ export class ChinaDocumentsStack extends cdk.Stack {
         resultPath: sfn.JsonPath.DISCARD,
       });
 
+    // El AVANCE de un trabajo en marcha: cada fase apunta en su registro cómo se llama, dónde empieza en la barra y cuánto ocupa (pBase, pSpan) y cuántas tandas se esperan (total);
+    // cada tanda hecha suma 1 a `done`. `GET /jobs` (backend/lambdas/jobs) calcula con eso el porcentaje y el texto "3 de 13 tandas". `total` es un texto con el número
+    // (DynamoDB lo pide así desde Step Functions); 0 = no se sabe y la barra se queda en la base de la fase.
+    const num = (value: string) => tasks.DynamoAttributeValue.numberFromString(value);
+    const markPhase = (stateId: string, text: string, base: number, span: number, total?: { path: string; unit: string }) =>
+      new tasks.DynamoUpdateItem(this, stateId, {
+        table: jobs,
+        key: jobKey,
+        // Los nombres van con alias (#...): `total`, `unit` y otros son palabras RESERVADAS de DynamoDB y darían error escritos tal cual en una expresión.
+        updateExpression: 'SET #ph = :p, #pb = :b, #ps = :s, #dn = :z, #tt = :t, #un = :u',
+        expressionAttributeNames: { '#ph': 'phase', '#pb': 'pBase', '#ps': 'pSpan', '#dn': 'done', '#tt': 'total', '#un': 'unit' },
+        expressionAttributeValues: {
+          ':p': tasks.DynamoAttributeValue.fromString(text),
+          ':b': num(String(base)),
+          ':s': num(String(span)),
+          ':z': num('0'),
+          ':t': total ? num(sfn.JsonPath.format('{}', sfn.JsonPath.stringAt(total.path))) : num('0'),
+          ':u': tasks.DynamoAttributeValue.fromString(total?.unit ?? ''),
+        },
+        resultPath: sfn.JsonPath.DISCARD,
+      });
+    const bumpDone = (stateId: string) =>
+      new tasks.DynamoUpdateItem(this, stateId, {
+        table: jobs,
+        key: jobKey,
+        updateExpression: 'ADD #dn :one',
+        expressionAttributeNames: { '#dn': 'done' },
+        expressionAttributeValues: { ':one': num('1') },
+        resultPath: sfn.JsonPath.DISCARD,
+      });
+
     // El análisis lo arranca `analyze` con: bucket (donde el flujo deja sus intermedios, que caducan), pdfBucket + key (el PDF ya guardado en books/<libro>/original.pdf) y jobId.
     const parse = new sfn.Pass(this, 'ParseUpload', {
       parameters: {
@@ -296,7 +327,10 @@ export class ChinaDocumentsStack extends cdk.Stack {
 
     // Tandas: States.ArrayRange(0, chunkCount-1, batchSize) -> [0, 100, 200, ...]. El -1 evita una tanda vacía al final.
     const makeBatches = new sfn.Pass(this, 'MakeBatches', {
-      parameters: { 'starts.$': `States.ArrayRange(0, States.MathAdd($.extract.chunkCount, -1), ${batchSize})` },
+      parameters: {
+        'starts.$': `States.ArrayRange(0, States.MathAdd($.extract.chunkCount, -1), ${batchSize})`,
+        'total.$': `States.Format('{}', States.ArrayLength(States.ArrayRange(0, States.MathAdd($.extract.chunkCount, -1), ${batchSize})))`, // nº de tandas, para el avance
+      },
       resultPath: '$.batches',
     });
 
@@ -315,7 +349,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       },
       resultPath: '$.embedResults',
     }).itemProcessor(
-      withRetry(
+      bumpDone('BumpEmbedDone').next(withRetry(
         invoke(
           'LabelAndEmbed',
           embedBatch,
@@ -330,7 +364,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
           resultPath: '$.write',
           outputPath: '$.embed', // de cada tanda solo interesa su resumen (dónde quedó, cuántos chunks, cuánto costó)
         }),
-      ),
+      )),
     );
 
     // Fase 2: hitos por tandas (hasta 5 a la vez). Solo extrae y deja el resultado en S3.
@@ -345,8 +379,10 @@ export class ChinaDocumentsStack extends cdk.Stack {
       },
       resultPath: '$.hitosResults',
     }).itemProcessor(
-      withRetry(
-        invoke('ExtractHitos', extractHitos, sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'labeledKey.$': '$.labeledKey', 'source.$': '$.source' })),
+      bumpDone('BumpHitosDone').next(
+        withRetry(
+          invoke('ExtractHitos', extractHitos, sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'labeledKey.$': '$.labeledKey', 'source.$': '$.source' })),
+        ),
       ),
     );
 
@@ -364,10 +400,12 @@ export class ChinaDocumentsStack extends cdk.Stack {
       },
       resultPath: '$.writeResults',
     }).itemProcessor(
-      invoke(
-        'WriteHitos',
-        writeHitos,
-        sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'hitosKey.$': '$.hitosKey', 'source.$': '$.source', 'replaceSource.$': '$.replaceSource' }),
+      bumpDone('BumpWriteDone').next(
+        invoke(
+          'WriteHitos',
+          writeHitos,
+          sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'hitosKey.$': '$.hitosKey', 'source.$': '$.source', 'replaceSource.$': '$.replaceSource' }),
+        ),
       ),
     );
 
@@ -395,18 +433,24 @@ export class ChinaDocumentsStack extends cdk.Stack {
       sfn.JsonPath.DISCARD,
     );
 
+    // Fases del análisis y su sitio en la barra: leer el PDF 2 %, etiquetar y embeddings 5-50 %, hitos 50-90 %, guardar 90-98 %, cerrar 98 %.
+    const phRead = markPhase('PhaseRead', 'Leyendo el PDF y preparando los fragmentos', 0.02, 0);
+    const phEmbed = markPhase('PhaseEmbed', 'Etiquetando épocas y calculando embeddings', 0.05, 0.45, { path: '$.batches.total', unit: 'tandas' });
+    const phHitos = markPhase('PhaseHitos', 'Extrayendo hitos y personajes', 0.5, 0.4, { path: '$.batches.total', unit: 'tandas' });
+    const phWrite = markPhase('PhaseWrite', 'Guardando hitos y personajes', 0.9, 0.08, { path: '$.batches.total', unit: 'tandas' });
+    const phEnd = markPhase('PhaseEnd', 'Terminando', 0.98, 0);
     const jobFailed = new sfn.Fail(this, 'JobFailed', { error: 'JobFailed', cause: 'Mira el campo error del registro del trabajo en DynamoDB' });
     markFailed.next(jobFailed);
-    for (const step of [getJob, markRunning, extractStep, periodStep, embedMap, extractMap, writeMap, finalizeStep, storeBookStep, markDone]) {
+    for (const step of [getJob, markRunning, phRead, extractStep, periodStep, phEmbed, embedMap, phHitos, extractMap, phWrite, writeMap, phEnd, finalizeStep, storeBookStep, markDone]) {
       step.addCatch(markFailed, { resultPath: '$.error' }); // cualquier fallo deja el trabajo en FAILED con su motivo
     }
 
     const afterExtract = new sfn.Choice(this, 'IsScannedPdf')
       .when(sfn.Condition.booleanEquals('$.extract.scanned', true), markNeedsOcr.next(new sfn.Fail(this, 'NeedsOcr', { error: 'NeedsOcr', cause: 'PDF escaneado: hace falta OCR' })))
-      .otherwise(periodStep.next(makeBatches).next(embedMap).next(extractMap).next(writeMap).next(finalizeStep).next(storeBookStep).next(markDone).next(new sfn.Succeed(this, 'JobDone')));
+      .otherwise(periodStep.next(makeBatches).next(phEmbed).next(embedMap).next(phHitos).next(extractMap).next(phWrite).next(writeMap).next(phEnd).next(finalizeStep).next(storeBookStep).next(markDone).next(new sfn.Succeed(this, 'JobDone')));
 
     const stateMachine = new sfn.StateMachine(this, 'Pipeline', {
-      definitionBody: sfn.DefinitionBody.fromChainable(parse.next(getJob).next(markRunning).next(extractStep).next(afterExtract)),
+      definitionBody: sfn.DefinitionBody.fromChainable(parse.next(getJob).next(markRunning).next(phRead).next(extractStep).next(afterExtract)),
       stateMachineType: sfn.StateMachineType.STANDARD, // Standard (no Express): dura más de 5 min y permite reanudar desde el paso fallido (redrive)
       timeout: cdk.Duration.hours(4),
       logs: {
@@ -455,13 +499,13 @@ export class ChinaDocumentsStack extends cdk.Stack {
       },
       resultPath: '$.results',
     }).itemProcessor(
-      withRetry(
+      bumpDone('OcrBumpPage').next(withRetry(
         invoke(
           'OcrPages',
           ocrPages,
           sfn.TaskInput.fromObject({ 'jobId.$': '$.jobId', 'bucket.$': '$.bucket', 'pdfBucket.$': '$.pdfBucket', 'key.$': '$.key', 'pageCount.$': '$.pageCount', 'start.$': '$.start', 'size.$': '$.size' }),
         ),
-      ),
+      )),
     );
     const ocrFinishStep = invoke(
       'OcrFinish',
@@ -477,17 +521,28 @@ export class ChinaDocumentsStack extends cdk.Stack {
       }),
       '$.summary',
     );
+    // Fases del OCR. Textract no informa de su avance: durante su lectura la barra se estima con el tiempo (cada comprobación suma una; `prepare` calcula cuántas se esperan).
+    const phOcrPrepare = markPhase('OcrPhasePrepare', 'Preparando el OCR', 0.02, 0);
+    const phOcrTextract = markPhase('OcrPhaseTextract', 'Amazon Textract está leyendo el libro (unos minutos)', 0.05, 0.85, { path: '$.prepare.total', unit: 'comprobaciones' });
+    const phOcrCollect = markPhase('OcrPhaseCollect', 'Recogiendo el texto reconocido', 0.92, 0);
+    const phOcrPages = markPhase('OcrPhasePages', 'Leyendo las páginas con OpenAI', 0.05, 0.9, { path: '$.prepare.total', unit: 'tandas' });
+    const phOcrEnd = markPhase('OcrPhaseEnd', 'Juntando el texto del libro', 0.97, 0);
+    const bumpOcrCheck = bumpDone('OcrBumpCheck');
     const ocrFailed = new sfn.Fail(this, 'OcrJobFailed', { error: 'OcrJobFailed', cause: 'Mira el campo error del registro del trabajo en DynamoDB' });
     ocrMarkFailed.next(ocrFailed);
-    for (const step of [ocrMarkRunning, ocrPrepareStep, ocrCheckStep, ocrCollectStep, ocrPagesMap, ocrFinishStep, ocrMarkDone]) {
+    for (const step of [ocrMarkRunning, phOcrPrepare, ocrPrepareStep, phOcrTextract, phOcrPages, bumpOcrCheck, ocrCheckStep, phOcrCollect, ocrCollectStep, ocrPagesMap, phOcrEnd, ocrFinishStep, ocrMarkDone]) {
       step.addCatch(ocrMarkFailed, { resultPath: '$.error' });
     }
-    ocrWait.next(ocrCheckStep).next(new sfn.Choice(this, 'OcrTextractDone').when(sfn.Condition.stringEquals('$.check.status', 'SUCCEEDED'), ocrCollectStep.next(ocrFinishStep)).otherwise(ocrWait));
-    ocrPagesMap.next(ocrFinishStep);
+    ocrWait.next(bumpOcrCheck).next(ocrCheckStep).next(new sfn.Choice(this, 'OcrTextractDone').when(sfn.Condition.stringEquals('$.check.status', 'SUCCEEDED'), phOcrCollect.next(ocrCollectStep).next(phOcrEnd)).otherwise(ocrWait));
+    ocrPagesMap.next(phOcrEnd);
+    phOcrEnd.next(ocrFinishStep);
     ocrFinishStep.next(ocrMarkDone).next(new sfn.Succeed(this, 'OcrDone'));
     const ocrMachine = new sfn.StateMachine(this, 'OcrPipeline', {
       definitionBody: sfn.DefinitionBody.fromChainable(
-        ocrMarkRunning.next(ocrPrepareStep).next(new sfn.Choice(this, 'OcrEngine').when(sfn.Condition.stringEquals('$.engine', 'textract'), ocrWait).otherwise(ocrPagesMap)),
+        ocrMarkRunning
+          .next(phOcrPrepare)
+          .next(ocrPrepareStep)
+          .next(new sfn.Choice(this, 'OcrEngine').when(sfn.Condition.stringEquals('$.engine', 'textract'), phOcrTextract.next(ocrWait)).otherwise(phOcrPages.next(ocrPagesMap))),
       ),
       stateMachineType: sfn.StateMachineType.STANDARD,
       timeout: cdk.Duration.hours(3),
