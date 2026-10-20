@@ -207,6 +207,8 @@ def ensure_dev_indexes(collection) -> None:
             # (el filtro admite rangos numéricos, no operadores geoespaciales).
             {"type": "filter", "path": "lat"},
             {"type": "filter", "path": "lng"},
+            # Para que el agente pregunte a UN libro (`source`) dentro de $vectorSearch.
+            {"type": "filter", "path": "source"},
         ]
     }
     try:

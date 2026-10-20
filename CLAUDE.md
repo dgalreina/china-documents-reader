@@ -229,6 +229,16 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   borrados, sustituciones). OIDC sin claves: rol `china-documents-github-deploy` (`ChinaDocumentsCiStack`, `infra/lib/ci-stack.ts`), variable `AWS_ROLE_ARN`, environments `despliegue` y `aprobacion`.
   `npm run deploy` local sigue valiendo. Ver `infra/README.md`.
 
+  **Agente con streaming (hecho, probado en local con servicios reales, sin desplegar):** `backend/ask/` es la UNICA Lambda en Node.js (Python no tiene streaming nativo en Lambda y el HTTP API de
+  API Gateway no lo permite): Function URL en modo `RESPONSE_STREAM`, publica, y la propia funcion valida el token de Cognito (`aws-jwt-verify`, id token del user pool y cliente web) ANTES de escribir nada.
+  Flujo: pregunta (max. 600 caracteres, historial = ultimos 6 turnos que manda el navegador; nada se guarda en el servidor) -> embedding (`text-embedding-3-small`) -> `$vectorSearch` en `book_chunks` de la base
+  del destino (filtro `source` = libro, o sin filtro para todos; siempre `origen` propio) -> `gpt-4o` temperature 0 solo con esos fragmentos -> NDJSON: `fuentes`, `delta`..., `fin` (o `error`). Si nada pasa
+  el umbral de relevancia (`ASK_MIN_SCORE`, 0,58: Atlas normaliza el coseno a 0,5-1; preguntas sin relacion sacan 0,51-0,54 y las pertinentes 0,61-0,78) NO se llama al modelo: "no lo encuentro". El indice
+  vectorial de dev ahora tiene `source` como filtro (`ensure_dev_indexes`; ya aplicado en dev). Sin freno de peticiones propio (no hay API Gateway delante; reservar concurrencia no es posible con la cuota
+  de una cuenta nueva): lo limitan el login, la pregunta corta y el historial recortado. Web: pestana Agente (`AgentTab`, `lib/ndjson.ts`, `HttpApi.ask`), citas con boton de pagina (abre el libro), "Detener",
+  "Reintentar", aviso si el libro no esta analizado. `askUrl` va en `config.json` (opcional: sin el, la pestana se oculta). Pruebas: `cd backend/ask && npm test` (18) y `node cli.mjs "pregunta" [slug]`
+  (real, cuesta centimos). El CI instala y prueba `backend/ask` y empaqueta con `npm run build:ask`.
+
 ## Ideas apuntadas (sin implementar)
 
 - **Libros escaneados / imagenes sueltas (para el FINAL, decidido con el usuario):** hoy un PDF sin texto acaba en `NEEDS_OCR`. Un solo paso de OCR por paginas

@@ -89,6 +89,8 @@ export interface Personaje {
 export interface Fuente {
   pagina: number;
   texto: string;
+  /** El libro del que sale la cita (el agente lo manda siempre; en la API simulada puede faltar: se entiende el libro abierto). */
+  slug?: string;
 }
 
 export interface ChatMessage {
@@ -98,6 +100,10 @@ export interface ChatMessage {
   /** De dónde sale la respuesta: del libro (con citas) o del conocimiento general del modelo (no está en el libro). */
   origen?: 'libro' | 'general';
   fuentes?: Fuente[];
+  /** La respuesta se está escribiendo todavía (llega por trozos). */
+  streaming?: boolean;
+  /** Falló (o se cortó): el texto es el aviso y se puede reintentar. */
+  failed?: boolean;
 }
 
 export type TabId = 'archivos' | 'progreso' | 'hitos' | 'personajes' | 'agente';

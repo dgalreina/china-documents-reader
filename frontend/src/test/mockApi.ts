@@ -1,6 +1,6 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, ChatMessage, Hito, Job, PageTranslation, Personaje } from '../types';
-import type { ApiClient, UploadOptions } from '../api/client';
+import type { Book, BookStats, Fuente, Hito, Job, PageTranslation, Personaje } from '../types';
+import type { ApiClient, AskEvent, AskRequest, UploadOptions } from '../api/client';
 
 // ---- Datos de ejemplo ------------------------------------------------------------------------------------------------------------------
 // Los hitos y personajes del libro de muestra salen de la prueba real con el Oxford Handbook (capítulo de los Zhou), pero las PÁGINAS son
@@ -302,30 +302,49 @@ export class MockApi implements ApiClient {
     );
   }
 
-  ask(slug: string | null, question: string): Promise<ChatMessage> {
-    return new Promise((resolve) => setTimeout(() => resolve(this.answer(slug, question)), this.options.askMs ?? 700));
+  /** Responde "en flujo": primero las citas, luego la respuesta palabra a palabra y al final `fin`, como el agente real. */
+  async ask(request: AskRequest, onEvent: (event: AskEvent) => void, signal?: AbortSignal): Promise<void> {
+    const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const aborted = () => new DOMException('Detenido', 'AbortError');
+    const wait = this.options.askMs ?? 700;
+    await pause(wait);
+    if (signal?.aborted) throw aborted();
+    if (request.question.toLowerCase().includes('fallo')) {
+      onEvent({ type: 'fuentes', fuentes: [] });
+      onEvent({ type: 'delta', text: '[Respuesta simulada] Empiezo a res' });
+      onEvent({ type: 'error', message: 'No se pudo obtener la respuesta. Inténtalo de nuevo.' });
+      return;
+    }
+    if (request.question.toLowerCase().includes('sin conexion')) throw new Error('No hay conexión con el agente.');
+    const answer = this.answer(request.slug, request.question);
+    onEvent({ type: 'fuentes', fuentes: (answer.fuentes ?? []).map((fuente) => ({ ...fuente, slug: request.slug ?? SAMPLE_SLUG })) });
+    for (const piece of answer.text.match(/\S+\s*/g) ?? []) {
+      await pause(Math.max(1, wait / 20));
+      if (signal?.aborted) throw aborted();
+      onEvent({ type: 'delta', text: piece });
+    }
+    onEvent({ type: 'fin', origen: answer.origen === 'libro' ? 'libro' : 'ninguno' });
   }
 
-  private answer(slug: string | null, question: string): ChatMessage {
+  private answer(slug: string | null, question: string): { text: string; fuentes?: Fuente[]; origen: 'libro' | 'general' } {
     const q = question.toLowerCase();
-    const id = randomId();
     if (q.includes('muye')) {
       return {
-        id, role: 'assistant', origen: 'libro',
-        text: '[Respuesta simulada] Según el libro, en Muye el rey Wu lideró el ataque final contra los Shang, en los suburbios de su capital.',
+        origen: 'libro',
+        text: '[Respuesta simulada] Según el libro, en Muye el rey Wu lideró el ataque final contra los Shang, en los suburbios de su capital (pág. 4).',
         fuentes: [{ pagina: 4, texto: 'Fa gathered his allies at the Muye field in the suburbs of the Shang capital Yin…' }],
       };
     }
     if (q.includes('luoyi') || q.includes('luoyang')) {
       return {
-        id, role: 'assistant', origen: 'libro',
-        text: '[Respuesta simulada] Según el libro, el rey Cheng fundó Luoyi como residencia oriental, también llamada Chengzhou.',
+        origen: 'libro',
+        text: '[Respuesta simulada] Según el libro, el rey Cheng fundó Luoyi como residencia oriental, también llamada Chengzhou (pág. 8).',
         fuentes: [{ pagina: 8, texto: 'King Cheng founded the eastern royal residence Luoyi…' }],
       };
     }
     return {
-      id, role: 'assistant', origen: 'general',
-      text: `[Respuesta simulada] Esto no aparece en ${slug ? 'el libro abierto' : 'ninguno de los libros'}. Aquí el agente respondería con su conocimiento general de historia de China, avisando de que no viene de ningún libro.`,
+      origen: 'general',
+      text: `[Respuesta simulada] No encuentro nada sobre eso en ${slug ? 'el libro abierto' : 'ninguno de los libros'}.`,
     };
   }
 }

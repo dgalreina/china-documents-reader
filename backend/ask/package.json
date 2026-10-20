@@ -1,0 +1,19 @@
+{
+  "name": "china-documents-ask",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Lambda del agente: responde preguntas sobre los libros con streaming (Node.js: es el runtime gestionado que sabe hacer streaming de la respuesta).",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "aws-jwt-verify": "^5.1.0",
+    "mongodb": "^6.18.0",
+    "openai": "^5.12.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-ssm": "^3.700.0"
+  }
+}

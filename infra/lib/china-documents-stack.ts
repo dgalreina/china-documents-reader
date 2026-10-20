@@ -489,6 +489,33 @@ export class ChinaDocumentsStack extends cdk.Stack {
       cacheControl: [s3deploy.CacheControl.fromString('public, max-age=31536000, immutable')],
       prune: false,
     });
+    // ---------------------------------------------------------------------------------------------------- agente (con streaming)
+    // El agente responde ESCRIBIENDO según el modelo genera (streaming). API Gateway (HTTP API) no puede hacerlo y Python no tiene streaming nativo en Lambda, así que esta
+    // es la única Lambda en Node.js, con su propia dirección (Function URL en modo RESPONSE_STREAM). Esa dirección es pública: NO tiene el autorizador de la API, por eso la
+    // función comprueba ella misma el token de Cognito (firma, caducidad, user pool y aplicación) ANTES de escribir nada. Sin el freno de 2 peticiones por segundo de la API:
+    // el límite de gasto son la pregunta corta (600 caracteres), el historial recortado y que solo entra quien tiene sesión.
+    const askFn = new lambda.Function(this, 'AskFn', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.X86_64,
+      code: lambda.Code.fromAsset(path.join(__dirname, '..', 'build', 'ask')),
+      handler: 'src/handler.handler',
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 512,
+      environment: {
+        SSM_PREFIX: ssmPrefix,
+        MONGO_TARGET: props.mongoTarget,
+        USER_POOL_ID: userPool.userPoolId,
+        USER_POOL_CLIENT_ID: webClient.userPoolClientId,
+      },
+      logGroup: new logs.LogGroup(this, 'AskFnLogs', { retention: logs.RetentionDays.ONE_MONTH, removalPolicy: cdk.RemovalPolicy.DESTROY }),
+    });
+    askFn.addToRolePolicy(readSecrets); // la clave de OpenAI y la URI de Mongo, de SSM
+    const askUrl = askFn.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: { allowedOrigins: origins, allowedMethods: [lambda.HttpMethod.POST], allowedHeaders: ['authorization', 'content-type'], maxAge: cdk.Duration.days(1) },
+    });
+
     const site = new s3deploy.BucketDeployment(this, 'DeploySite', {
       sources: [
         s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend', 'dist'), { exclude: ['samples', 'samples/*', '*.pdf', 'assets', 'assets/*'] }),
@@ -497,6 +524,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
           apiUrl: api.apiEndpoint,
           userPoolId: userPool.userPoolId,
           userPoolClientId: webClient.userPoolClientId,
+          askUrl: askUrl.url,
         }),
       ],
       destinationBucket: siteBucket,
@@ -511,6 +539,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     // ------------------------------------------------------------------------------------------------------ salidas
     new cdk.CfnOutput(this, 'SiteUrl', { value: siteUrl, description: 'La web: ábrela desde el PC o el móvil' });
     new cdk.CfnOutput(this, 'ApiUrl', { value: api.apiEndpoint });
+    new cdk.CfnOutput(this, 'AskUrl', { value: askUrl.url, description: 'El agente (streaming)' });
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: webClient.userPoolClientId });
     new cdk.CfnOutput(this, 'DataBucketName', { value: dataBucket.bucketName });

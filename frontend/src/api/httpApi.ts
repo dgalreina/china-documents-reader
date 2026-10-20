@@ -1,6 +1,7 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, ChatMessage, Hito, Job, JobKind, JobStatus, PageTranslation, Personaje, PersonajeRef } from '../types';
-import type { ApiClient, ApiFeatures, UploadOptions } from './client';
+import { readNdjson } from '../lib/ndjson';
+import type { Book, BookStats, Hito, Job, JobKind, JobStatus, PageTranslation, Personaje, PersonajeRef } from '../types';
+import type { ApiClient, ApiFeatures, AskEvent, AskRequest, UploadOptions } from './client';
 import { uploadToS3, type PresignedPost, type UploadFn } from './s3Upload';
 
 /** Un fallo de la API con un mensaje que se puede enseñar tal cual al usuario (en español). */
@@ -214,6 +215,8 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
 export interface HttpApiOptions {
   /** Dirección base de la API (sin barra final). */
   apiUrl: string;
+  /** Dirección del agente (Function URL con streaming). Sin ella, la pestaña Agente no se enseña. */
+  askUrl?: string;
   /** Token del login (el de ID de Cognito). Debe rechazar si no hay sesión. */
   getToken: () => Promise<string>;
   /** La API dijo 401 o no hay sesión: hay que volver a la pantalla de entrada. */
@@ -226,10 +229,10 @@ export interface HttpApiOptions {
 
 /**
  * La API real: API Gateway con el token de Cognito en cada petición. Mientras haya trabajos en marcha avisa a la interfaz cada pocos segundos
- * (el backend aún no avisa por sí solo: se pregunta). El agente todavía no tiene endpoint: `features` lo dice y la interfaz no enseña su pestaña.
+ * (el backend aún no avisa por sí solo: se pregunta). El agente tiene su propia dirección (con streaming): `features` dice si está configurada y, si no, la interfaz no enseña su pestaña.
  */
 export class HttpApi implements ApiClient {
-  readonly features: ApiFeatures = { hitos: true, agent: false };
+  readonly features: ApiFeatures;
 
   private listeners = new Set<() => void>();
   private uploads = new Map<string, LocalUpload>();
@@ -238,7 +241,9 @@ export class HttpApi implements ApiClient {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastProgressNotify = 0;
 
-  constructor(private options: HttpApiOptions) {}
+  constructor(private options: HttpApiOptions) {
+    this.features = { hitos: true, agent: Boolean(options.askUrl) };
+  }
 
   private get now() {
     return (this.options.now ?? Date.now)();
@@ -334,8 +339,42 @@ export class HttpApi implements ApiClient {
     this.notify(); // la lista se refresca sin el libro
   }
 
-  async ask(): Promise<ChatMessage> {
-    throw new ApiError('El agente todavía no está disponible.');
+  async ask(request: AskRequest, onEvent: (event: AskEvent) => void, signal?: AbortSignal): Promise<void> {
+    const askUrl = this.options.askUrl;
+    if (!askUrl) throw new ApiError('El agente todavía no está disponible.');
+    let token: string;
+    try {
+      token = await this.options.getToken();
+    } catch {
+      this.options.onUnauthorized();
+      throw new ApiError('Tu sesión ha caducado. Vuelve a entrar.', 401);
+    }
+    const send = this.options.fetchFn ?? fetch;
+    let response: Response;
+    try {
+      response = await send(askUrl, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+        signal,
+      });
+    } catch (problem) {
+      if (signal?.aborted) throw problem; // el usuario detuvo la respuesta: no es un fallo de red
+      throw new ApiError('No hay conexión con el agente. Comprueba tu conexión y vuelve a intentarlo.');
+    }
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.options.onUnauthorized();
+        throw new ApiError('Tu sesión ha caducado. Vuelve a entrar.', 401);
+      }
+      const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+      throw new ApiError(typeof body?.error === 'string' ? body.error : `El agente respondió con un error (${response.status}).`, response.status);
+    }
+    if (!response.body) throw new ApiError('El agente no respondió.');
+    for await (const event of readNdjson(response.body)) {
+      const typed = event as { type?: unknown };
+      if (typed && typeof typed === 'object' && typeof typed.type === 'string') onEvent(event as AskEvent);
+    }
   }
 
   async startUpload(file: File, options: UploadOptions): Promise<{ jobId: string }> {

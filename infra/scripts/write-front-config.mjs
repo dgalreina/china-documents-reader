@@ -32,6 +32,6 @@ for (const key of ['ApiUrl', 'UserPoolId', 'UserPoolClientId']) {
 }
 
 const target = fileURLToPath(new URL('../../frontend/public/config.json', import.meta.url));
-const config = { region: REGION, apiUrl: outputs.ApiUrl, userPoolId: outputs.UserPoolId, userPoolClientId: outputs.UserPoolClientId };
+const config = { region: REGION, apiUrl: outputs.ApiUrl, userPoolId: outputs.UserPoolId, userPoolClientId: outputs.UserPoolClientId, ...(outputs.AskUrl ? { askUrl: outputs.AskUrl } : {}) };
 writeFileSync(target, `${JSON.stringify(config, null, 2)}\n`);
 console.log(`✓ Escrito ${target}\n  Ahora: cd frontend && npm run dev  (http://localhost:5173 ya está permitido en el CORS de la API)`);

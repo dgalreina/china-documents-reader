@@ -1,4 +1,25 @@
-import type { Book, ChatMessage, Hito, Job, PageTranslation, Personaje } from '../types';
+import type { Book, Fuente, Hito, Job, PageTranslation, Personaje } from '../types';
+
+/** Un turno de la conversación, tal como se manda al agente (solo texto: nunca ids ni citas). */
+export interface AskTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface AskRequest {
+  /** El libro por el que se pregunta; null = todos. */
+  slug: string | null;
+  question: string;
+  /** Los últimos turnos de la conversación (el servidor se queda con los últimos 6). */
+  history: AskTurn[];
+}
+
+/** Lo que va llegando mientras el agente responde (en este orden: citas, trozos de texto, fin). */
+export type AskEvent =
+  | { type: 'fuentes'; fuentes: Fuente[] }
+  | { type: 'delta'; text: string }
+  | { type: 'fin'; origen: 'libro' | 'ninguno' }
+  | { type: 'error'; message: string };
 
 export interface UploadOptions {
   /** Identificador del libro (el `source` de MongoDB): minúsculas, números y guiones. */
@@ -34,8 +55,11 @@ export interface ApiClient {
   getPdfUrl(slug: string): Promise<string>;
   /** Valida, sube el PDF y arranca el análisis. Rechaza con un mensaje en español si algo no es válido. */
   startUpload(file: File, options: UploadOptions): Promise<{ jobId: string }>;
-  /** Pregunta al agente. `slug` null = preguntar a todos los libros. */
-  ask(slug: string | null, question: string): Promise<ChatMessage>;
+  /**
+   * Pregunta al agente. La respuesta llega EN FLUJO: `onEvent` se llama con las citas, luego con cada trozo de texto y al final con `fin` (o `error` si falla a mitad).
+   * Rechaza con un mensaje en español si ni siquiera empieza (sin sesión, sin conexión, pregunta inválida). `signal` permite detenerla (rechaza con un AbortError).
+   */
+  ask(request: AskRequest, onEvent: (event: AskEvent) => void, signal?: AbortSignal): Promise<void>;
   /** Traduce una página al español (la primera vez tarda unos segundos; después sale de la caché). Rechaza con un mensaje en español. */
   getTranslation(slug: string, page: number): Promise<PageTranslation>;
   /** Arranca el análisis (hitos y personajes) de un libro ya subido. Cuesta dinero (OpenAI), por eso no arranca solo al subir. Rechaza con un mensaje en español, p. ej. si ya se está analizando. */

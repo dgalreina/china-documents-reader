@@ -15,6 +15,12 @@ describe('parseConfig', () => {
     expect(() => parseConfig(null)).toThrow(/Falta en config.json/);
   });
 
+  it('la dirección del agente es opcional (sin ella, no hay pestaña Agente) y también pierde la barra final', () => {
+    expect(parseConfig(valid).askUrl).toBeUndefined();
+    expect(parseConfig({ ...valid, askUrl: 'https://xyz.lambda-url.eu-west-1.on.aws/' }).askUrl).toBe('https://xyz.lambda-url.eu-west-1.on.aws');
+    expect(() => parseConfig({ ...valid, askUrl: 'xyz.example' })).toThrow(/askUrl/);
+  });
+
   it('la dirección de la API tiene que ser una URL', () => {
     expect(() => parseConfig({ ...valid, apiUrl: 'abc.example' })).toThrow(/https:\/\//);
   });

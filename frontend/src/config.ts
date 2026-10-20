@@ -4,6 +4,8 @@ export interface AppConfig {
   apiUrl: string;
   userPoolId: string;
   userPoolClientId: string;
+  /** Dirección del agente (streaming). Opcional: sin ella, la pestaña Agente no se enseña. */
+  askUrl?: string;
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -19,9 +21,11 @@ export function parseConfig(raw: unknown): AppConfig {
   const missing = Object.entries(config)
     .filter(([, value]) => !value)
     .map(([key]) => key);
+  const askUrl = text(data.askUrl).replace(/\/+$/, '');
   if (missing.length) throw new Error(`Falta en config.json: ${missing.join(', ')}.`);
   if (!/^https?:\/\//.test(config.apiUrl)) throw new Error('apiUrl de config.json debe empezar por https://');
-  return config;
+  if (askUrl && !/^https?:\/\//.test(askUrl)) throw new Error('askUrl de config.json debe empezar por https://');
+  return askUrl ? { ...config, askUrl } : config;
 }
 
 /** index.html pide la configuración nada más cargar (en paralelo con el JavaScript) y deja la promesa aquí. */

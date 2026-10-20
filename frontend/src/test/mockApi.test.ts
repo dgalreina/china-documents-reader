@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AskEvent } from '../api/client';
 import { MockApi, SAMPLE_SLUG } from './mockApi';
 
 const pdf = (name = 'libro.pdf', size = 1000) => new File([new Uint8Array(size)], name, { type: 'application/pdf' });
@@ -169,27 +170,50 @@ describe('validación al subir', () => {
 });
 
 describe('agente', () => {
+  /** Hace la pregunta, deja correr el reloj y devuelve los eventos que fueron llegando. */
   const ask = async (slug: string | null, question: string) => {
-    const pending = api.ask(slug, question);
-    await vi.advanceTimersByTimeAsync(10);
-    return pending;
+    const events: AskEvent[] = [];
+    const pending = api.ask({ slug, question, history: [] }, (event) => events.push(event));
+    await vi.advanceTimersByTimeAsync(2000);
+    await pending;
+    return events;
   };
+  const textOf = (events: AskEvent[]) => events.flatMap((event) => (event.type === 'delta' ? [event.text] : [])).join('');
 
-  it('si la respuesta sale del libro, lo dice y cita la página', async () => {
-    const answer = await ask(SAMPLE_SLUG, '¿Qué pasó en Muye?');
-    expect(answer.origen).toBe('libro');
-    expect(answer.fuentes?.[0].pagina).toBe(4);
+  it('la respuesta llega en flujo: primero las citas, luego trozos de texto y al final "fin"', async () => {
+    const events = await ask(SAMPLE_SLUG, '¿Qué pasó en Muye?');
+    expect(events[0]).toMatchObject({ type: 'fuentes', fuentes: [{ pagina: 4, slug: SAMPLE_SLUG }] });
+    expect(events.filter((event) => event.type === 'delta').length).toBeGreaterThan(3); // en trozos, no de golpe
+    expect(textOf(events)).toMatch(/Muye/);
+    expect(events[events.length - 1]).toEqual({ type: 'fin', origen: 'libro' });
   });
 
-  it('si no está en el libro, avisa de que es conocimiento general y no cita nada', async () => {
-    const answer = await ask(SAMPLE_SLUG, '¿Cuándo se unificó China?');
-    expect(answer.origen).toBe('general');
-    expect(answer.fuentes).toBeUndefined();
+  it('si no está en el libro, lo dice, no cita nada y no se presenta como del libro', async () => {
+    const events = await ask(SAMPLE_SLUG, '¿Cuándo se unificó China?');
+    expect(events[0]).toEqual({ type: 'fuentes', fuentes: [] });
+    expect(events[events.length - 1]).toEqual({ type: 'fin', origen: 'ninguno' });
   });
 
   it('distingue preguntar a un libro o a todos', async () => {
-    expect((await ask(SAMPLE_SLUG, 'algo')).text).toMatch(/libro abierto/);
-    expect((await ask(null, 'algo')).text).toMatch(/ninguno de los libros/);
+    expect(textOf(await ask(SAMPLE_SLUG, 'algo'))).toMatch(/libro abierto/);
+    expect(textOf(await ask(null, 'algo'))).toMatch(/ninguno de los libros/);
+  });
+
+  it('un fallo a mitad llega como evento "error"', async () => {
+    const events = await ask(SAMPLE_SLUG, 'provoca un fallo');
+    expect(events[events.length - 1]).toMatchObject({ type: 'error' });
+  });
+
+  it('se puede detener: rechaza con AbortError y deja de emitir', async () => {
+    const controller = new AbortController();
+    const events: AskEvent[] = [];
+    const pending = api.ask({ slug: SAMPLE_SLUG, question: '¿Qué pasó en Muye?', history: [] }, (event) => events.push(event), controller.signal);
+    const caught = pending.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(((await caught) as Error).name).toBe('AbortError');
+    expect(events[events.length - 1]?.type).not.toBe('fin');
   });
 });
 

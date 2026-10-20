@@ -101,3 +101,9 @@ aws cognito-idp admin-initiate-auth --user-pool-id <UserPoolId> --client-id <Use
 Sin claves guardadas: GitHub se identifica con OIDC y asume el rol `china-documents-github-deploy` (stack `ChinaDocumentsCiStack`, `lib/ci-stack.ts`), que solo acepta este repo desde `main` o desde los dos environments, y solo puede usar los roles del bootstrap de CDK.
 Puesta en marcha (una vez): `npm run deploy:ci` con `aws login`; variable de repositorio `AWS_ROLE_ARN`; environments `despliegue` y `aprobacion` (este con revisor), ambos limitados a la rama `main`.
 `npm run deploy` local sigue funcionando (sirve de plan B si el CI falla).
+
+## Agente (Node.js, streaming)
+
+`AskFn` (`backend/ask/`, Node.js 22) responde en flujo desde su propia Function URL (`AskUrl` en las salidas; va también en `config.json` como `askUrl`). Es pública por diseño: la funcion comprueba el token
+de Cognito ella misma antes de escribir. `npm run build:ask` instala sus dependencias de produccion en `infra/build/ask`. Lee de SSM `OPENAI_API_KEY` y `MONGODB_URI_DEV` (o `_PROD` si `mongoTarget=prod`).
+Para desarrollar la web contra el: `node infra/scripts/write-front-config.mjs` ya incluye `askUrl` si el stack lo tiene.

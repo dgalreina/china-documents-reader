@@ -236,7 +236,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
             personajes: (
               <PersonajesTab personajes={personajes} hitos={hitos} books={books} currentSlug={book?.slug} onGoTo={goTo} onOpenBook={select} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} />
             ),
-            agente: <AgentTab api={client} slug={book?.slug ?? null} onGoToPage={goToPage} />,
+            agente: <AgentTab api={client} slug={book?.slug ?? null} books={books} analysis={analysis} onAnalyze={book ? () => setAnalyzing(book) : undefined} onGoTo={goTo} />,
           }}
         />
       {analyzing && <AnalyzeDialog book={analyzing} jobs={jobs} onConfirm={analyze} onClose={() => setAnalyzing(null)} />}

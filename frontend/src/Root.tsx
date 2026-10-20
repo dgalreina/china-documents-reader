@@ -38,7 +38,7 @@ export default function Root() {
 
   // Una sola instancia de la API mientras haya sesión (guarda las subidas en curso y la caché de URLs).
   const api = useMemo(
-    () => (ready?.signedIn ? new HttpApi({ apiUrl: ready.config.apiUrl, getToken: () => ready.auth.getIdToken(), onUnauthorized: signedOut }) : null),
+    () => (ready?.signedIn ? new HttpApi({ apiUrl: ready.config.apiUrl, askUrl: ready.config.askUrl, getToken: () => ready.auth.getIdToken(), onUnauthorized: signedOut }) : null),
     [ready?.signedIn, ready?.config, ready?.auth, signedOut],
   );
 

@@ -5,9 +5,10 @@
   "scripts": {
     "build": "tsc --noEmit",
     "build:lambda": "node scripts/build-lambda.mjs",
-    "synth": "npm run build:lambda && npm run build:front && cdk synth --quiet",
-    "diff": "npm run build:lambda && npm run build:front && cdk diff ChinaDocumentsStack",
-    "deploy": "npm run build:lambda && npm run build:front && cdk deploy ChinaDocumentsStack",
+    "build:ask": "node scripts/build-ask.mjs",
+    "synth": "npm run build:lambda && npm run build:ask && npm run build:front && cdk synth --quiet",
+    "diff": "npm run build:lambda && npm run build:ask && npm run build:front && cdk diff ChinaDocumentsStack",
+    "deploy": "npm run build:lambda && npm run build:ask && npm run build:front && cdk deploy ChinaDocumentsStack",
     "deploy:ci": "cdk deploy ChinaDocumentsCiStack --app \"npx ts-node --prefer-ts-exts bin/ci.ts\"",
     "build:front": "node scripts/build-front.mjs"
   },

@@ -155,10 +155,71 @@ describe('peticiones', () => {
     expect(server.calls[0].body).toBeUndefined();
   });
 
-  it('el agente aún no existe: la interfaz lo sabe y no enseña su pestaña', async () => {
+  it('sin dirección del agente la interfaz lo sabe y no enseña su pestaña', async () => {
     const api = makeApi(fakeServer({}));
     expect(api.features).toEqual({ hitos: true, agent: false });
-    await expect(api.ask()).rejects.toThrow(/no está disponible/);
+    await expect(api.ask({ slug: null, question: 'hola', history: [] }, () => undefined)).rejects.toThrow(/no está disponible/);
+  });
+});
+
+describe('agente (streaming)', () => {
+  const ASK_URL = 'https://ask.test';
+  const request = { slug: 'libro-a', question: '¿Quién fue el rey Wu?', history: [{ role: 'user' as const, text: 'hola' }] };
+  const lines = (...events: object[]) => events.map((event) => `${JSON.stringify(event)}\n`);
+
+  /** Un fetch falso que contesta con trozos de texto (como el flujo real) y apunta la petición recibida. */
+  const streamingApi = (chunks: string[], status = 200) => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (status !== 200) return new Response(JSON.stringify({ error: 'Pregunta no válida.' }), { status });
+      const encoder = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+    return { calls, api: new HttpApi({ apiUrl: 'https://api.test', askUrl: ASK_URL, getToken: async () => 'tok-123', onUnauthorized: unauthorized, fetchFn }) };
+  };
+
+  it('con dirección, la pestaña Agente se enseña', () => {
+    expect(streamingApi([]).api.features.agent).toBe(true);
+  });
+
+  it('manda el token, la pregunta y la conversación, y va entregando los eventos según llegan', async () => {
+    const { api, calls } = streamingApi(lines({ type: 'fuentes', fuentes: [{ slug: 'libro-a', pagina: 4, texto: 'x' }] }, { type: 'delta', text: 'Ganó ' }, { type: 'delta', text: 'él.' }, { type: 'fin', origen: 'libro' }));
+    const events: unknown[] = [];
+    await api.ask(request, (event) => events.push(event));
+    expect(calls[0].url).toBe(ASK_URL);
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe('Bearer tok-123');
+    expect(JSON.parse(calls[0].init.body as string)).toEqual(request);
+    expect(events.map((event) => (event as { type: string }).type)).toEqual(['fuentes', 'delta', 'delta', 'fin']);
+  });
+
+  it('una línea partida entre dos trozos de red no se pierde', async () => {
+    const [first, second] = [JSON.stringify({ type: 'delta', text: 'hola' }).slice(0, 10), `${JSON.stringify({ type: 'delta', text: 'hola' }).slice(10)}\n`];
+    const { api } = streamingApi([first, second]);
+    const events: unknown[] = [];
+    await api.ask(request, (event) => events.push(event));
+    expect(events).toEqual([{ type: 'delta', text: 'hola' }]);
+  });
+
+  it('un 401 manda a la pantalla de entrada; un 400 llega con el motivo del servidor', async () => {
+    await expect(streamingApi([], 401).api.ask(request, () => undefined)).rejects.toMatchObject({ status: 401 });
+    expect(unauthorized).toHaveBeenCalled();
+    await expect(streamingApi([], 400).api.ask(request, () => undefined)).rejects.toThrow(/Pregunta no válida/);
+  });
+
+  it('sin conexión: un mensaje que se puede enseñar; detenida por el usuario: el AbortError tal cual', async () => {
+    const offline = new HttpApi({ apiUrl: 'https://api.test', askUrl: ASK_URL, getToken: async () => 't', onUnauthorized: unauthorized, fetchFn: (async () => { throw new TypeError('Failed to fetch'); }) as unknown as typeof fetch });
+    await expect(offline.ask(request, () => undefined)).rejects.toThrow(/No hay conexión/);
+    const controller = new AbortController();
+    controller.abort();
+    const stopped = new HttpApi({ apiUrl: 'https://api.test', askUrl: ASK_URL, getToken: async () => 't', onUnauthorized: unauthorized, fetchFn: (async () => { throw new DOMException('Detenido', 'AbortError'); }) as unknown as typeof fetch });
+    await expect(stopped.ask(request, () => undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
 
