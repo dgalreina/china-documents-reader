@@ -2,9 +2,17 @@
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { MongoClient } from 'mongodb';
 import OpenAI from 'openai';
-import { DEFAULT_MIN_SCORE, EMBEDDING_MODEL } from './core.mjs';
+import { DEFAULT_FULL_BOOK_CHARS, DEFAULT_MIN_SCORE, EMBEDDING_MODEL } from './core.mjs';
 
 const secretCache = new Map();
+
+const PLANNER_PROMPT = [
+  'You prepare searches over history books about China (the books are in English). Given the user question (usually in Spanish) and the recent conversation, answer ONLY with JSON:',
+  '{"general": boolean, "query": string}',
+  '"general" is true ONLY if the user asks about the whole book or document: what it is about, a summary, its main argument or thesis, its structure, who wrote it, what it covers.',
+  'Otherwise false. "query" is a standalone search query in English that captures what the user wants to find, resolving pronouns and references using the conversation.',
+  'Keep Chinese names and terms as they are (pinyin or characters). No extra text.',
+].join('\n');
 
 /** Un secreto: de la variable de entorno (en local, el `.env`) o, en AWS, de SSM Parameter Store (`SSM_PREFIX/<NOMBRE>`). Nunca se imprime. */
 export async function getSecret(name) {
@@ -45,9 +53,25 @@ export async function getServices(env = process.env) {
   cached = {
     chunks: mongo.db(dbName).collection(env.CHUNKS_COLLECTION ?? 'book_chunks'),
     minScore: Number(env.ASK_MIN_SCORE ?? DEFAULT_MIN_SCORE),
+    fullBookChars: Number(env.ASK_FULL_BOOK_CHARS ?? DEFAULT_FULL_BOOK_CHARS),
     async embed(input) {
       const response = await openai.embeddings.create({ model: EMBEDDING_MODEL, input });
       return response.data[0].embedding;
+    },
+    // El paso previo: decide si la pregunta es GENERAL sobre el libro y la reescribe como una consulta de búsqueda autónoma en inglés (los libros están en inglés y
+    // "¿y quién le sucedió?" solo se entiende con la conversación). Un modelo pequeño basta: es una tarea sencilla.
+    async plan(question, history) {
+      const recent = history.slice(-4).map((turn) => `${turn.role === 'user' ? 'Usuario' : 'Asistente'}: ${turn.text.slice(0, 300)}`).join('\n');
+      const response = await openai.chat.completions.create({
+        model: env.ASK_PLANNER_MODEL ?? 'gpt-4o-mini',
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: PLANNER_PROMPT },
+          { role: 'user', content: `${recent ? `Conversación reciente:\n${recent}\n\n` : ''}Pregunta: ${question}` },
+        ],
+      });
+      return JSON.parse(response.choices[0].message.content);
     },
     async *streamChat(messages) {
       const stream = await openai.chat.completions.create({ model, messages, stream: true, temperature: 0 });

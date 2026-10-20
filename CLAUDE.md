@@ -238,6 +238,10 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   de una cuenta nueva): lo limitan el login, la pregunta corta y el historial recortado. Web: pestana Agente (`AgentTab`, `lib/ndjson.ts`, `HttpApi.ask`), citas con boton de pagina (abre el libro), "Detener",
   "Reintentar", aviso si el libro no esta analizado. `askUrl` va en `config.json` (opcional: sin el, la pestana se oculta). Pruebas: `cd backend/ask && npm test` (18) y `node cli.mjs "pregunta" [slug]`
   (real, cuesta centimos). El CI instala y prueba `backend/ask` y empaqueta con `npm run build:ask`.
+  **Paso previo (`plan`, gpt-4o-mini, ~0,001 USD):** decide si la pregunta es GENERAL sobre el libro ("de que trata", resumen) o concreta y reescribe la concreta como consulta autonoma en INGLES (resuelve
+  "¿y quien le sucedio?" con la conversacion y mejora la busqueda en libros en ingles). Fallo visto en el movil: una pregunta general no se parece a ningun fragmento y la busqueda por parecido traia un pie de nota
+  al azar ('novela'). Ahora una pregunta general NO busca por parecido: si el libro cabe en `ASK_FULL_BOOK_CHARS` (100.000 caracteres ≈ 25.000 tokens ≈ 0,06 USD/pregunta) se lee ENTERO; si no, el comienzo
+  (3 fragmentos) y 7 repartidos por el resto. Un resumen de verdad de un libro de 800 paginas pediria un resumen precalculado en el analisis (idea, no hecho). Si el paso previo falla, se busca como antes.
 
 ## Ideas apuntadas (sin implementar)
 
