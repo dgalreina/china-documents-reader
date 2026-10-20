@@ -131,8 +131,8 @@ las búsquedas de china-history. Reglas para el paso de escritura en Mongo (aún
   china-history con el mismo slug). **Fallo corregido:** un hito con el mismo `id` de OTRO libro (mismo titulo/lugar/anio) se sobrescribia
   y luego la limpieza lo borraba; ahora el mismo id solo cuenta como 'el mismo hito' si es del mismo libro y la escritura reemplaza por
   (id, origen, fuente). Revisar siempre a mano el estado de dev tras una simulacion: asi se vio.
-- **AWS (preparado, nada desplegado):** cuenta con plan GRATUITO (6 meses o hasta gastar los creditos; luego pasar a plan de pago o la
-  cuenta se cierra), presupuesto de 10 USD con alerta, region `eu-west-1`, usuario IAM `cdk-deployer`, CLI v2 y CDK instalados,
+- **AWS (preparado, nada desplegado):** cuenta en plan de PAGO (`aws freetier get-account-plan-state --region us-east-1` -> PAID/ACTIVE) con 140 USD de creditos que
+  caducan el 17/10/2027 (verificado el 20/10/2026). Textract dio `SubscriptionRequiredException` los primeros dias de la cuenta y luego funciono solo (activacion de servicios en cuentas nuevas), presupuesto de 10 USD con alerta, region `eu-west-1`, usuario IAM `cdk-deployer`, CLI v2 y CDK instalados,
   sesion con `aws login` (credenciales temporales de hasta 12 h; si caducan, repetir `aws login`; boto3 local necesita `botocore[crt]`).
   **NO habilitar IAM Identity Center / AWS Organizations: convierte la cuenta en pago por uso y los creditos caducan al instante.**
   **NO aceptar el MCP de AWS que ofrece `aws login`** sin decidirlo (da a un agente acceso a la cuenta con AdministratorAccess).
@@ -252,6 +252,10 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   agente ya funcionan en escaneados), y el lector en ingles (`GET /books/{slug}/ocr-url`, el navegador baja el JSON una vez). Un OCR en marcha NO cuenta como analisis (`analysisState`). Repetir el OCR con el otro motor
   esta en la tarjeta. IAM: Textract solo admite `*`; las Lambdas que lo llaman leen el PDF con su propio rol. Fallos arreglados de paso: el IndexedDB guardaba traducciones VACIAS (ahora no se guardan ni se leen) y el
   ambito de las traducciones incluye la version del OCR. **Sin probar en AWS real:** Textract con este PDF (CCITT/ICC, 3024x4836) y la vision de OpenAI; se prueba tras desplegar.
+
+  **Rendimiento con libros largos (medido, arreglado):** con 554 paginas el lector en español bloqueaba el movil (CPU 4x mas lenta simulada: 86 de 87 fotogramas >50 ms, 23 s de bloqueo): cada traduccion o
+  texto en ingles repintaba las 554 paginas (~5.000 elementos). Ahora `ReaderPage` y `PdfPage` van en `memo` con props estables y las paginas lejanas (>8) sin traducir son un hueco vacio de la misma altura
+  (1 de 803 fotogramas lento, 0 s; 946 elementos). Regla: en listas de cientos de paginas, memo + sin contenido lejos de la que se lee; medir con puppeteer + `Emulation.setCPUThrottlingRate`.
 
 ## Ideas apuntadas (sin implementar)
 

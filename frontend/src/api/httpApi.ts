@@ -182,6 +182,24 @@ function summaryStats(summary: ServerJob['summary']): BookStats | undefined {
   };
 }
 
+/**
+ * Step Functions guarda el fallo de una Lambda como `NombreDelError: {"errorMessage": "...", "errorType": "...", "stackTrace": [...]}`. Al usuario le interesa solo el mensaje:
+ * se saca de ahí (sin el rastro técnico). Un texto que no tiene esa forma se deja como está, recortado si es larguísimo.
+ */
+export function cleanJobError(error: string | undefined): string | undefined {
+  if (!error) return error;
+  const match = /^[\w.]+: (\{[\s\S]*\})\s*$/.exec(error);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[1]) as { errorMessage?: unknown };
+      if (typeof parsed.errorMessage === 'string' && parsed.errorMessage.trim()) return parsed.errorMessage.trim().slice(0, 400);
+    } catch {
+      /* no era JSON: se enseña tal cual, recortado */
+    }
+  }
+  return error.length > 400 ? `${error.slice(0, 400)}…` : error;
+}
+
 export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
   let status = (STATUSES.has(job.status as JobStatus) ? job.status : 'RUNNING') as JobStatus;
   let error = job.error;
@@ -215,7 +233,7 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
     status,
     phase,
     progress,
-    error,
+    error: cleanJobError(error),
     stats: summaryStats(job.summary),
     createdAt: job.createdAt ?? '',
     finishedAt: job.finishedAt,

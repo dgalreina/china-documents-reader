@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, HttpApi, mapBook, mapHito, mapJob } from './httpApi';
+import { ApiError, HttpApi, cleanJobError, mapBook, mapHito, mapJob } from './httpApi';
 import type { PresignedPost } from './s3Upload';
 
 const NOW = Date.parse('2026-10-19T12:00:00Z');
@@ -159,6 +159,21 @@ describe('peticiones', () => {
     const api = makeApi(fakeServer({}));
     expect(api.features).toEqual({ hitos: true, agent: false });
     await expect(api.ask({ slug: null, question: 'hola', history: [] }, () => undefined)).rejects.toThrow(/no está disponible/);
+  });
+});
+
+describe('cleanJobError', () => {
+  it('de un fallo de Lambda solo enseña el mensaje, sin el rastro técnico', () => {
+    const raw = 'ClientError: {"errorMessage": "Amazon Textract no está activado en esta cuenta.", "errorType": "OcrFailed", "stackTrace": ["  File \\"/var/task/x.py\\", line 151"]}';
+    expect(cleanJobError(raw)).toBe('Amazon Textract no está activado en esta cuenta.');
+  });
+  it('un texto normal se deja igual y uno larguísimo se recorta', () => {
+    expect(cleanJobError('No se pudo arrancar el análisis.')).toBe('No se pudo arrancar el análisis.');
+    expect(cleanJobError('x'.repeat(900))?.length).toBe(401);
+    expect(cleanJobError(undefined)).toBeUndefined();
+  });
+  it('un JSON roto no revienta: se enseña recortado', () => {
+    expect(cleanJobError('Error: {no es json')).toBe('Error: {no es json');
   });
 });
 

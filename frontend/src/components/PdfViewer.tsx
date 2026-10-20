@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { HEADER_HEIGHT } from '../lib/layout';
 import { clamp, usePinch } from '../lib/usePinch';
@@ -212,8 +212,11 @@ interface PdfPageProps {
   active: boolean;
 }
 
-/** Una página. Reserva siempre su hueco (para que el scroll no salte) y solo dibuja el contenido cuando está cerca de lo visible. */
-function PdfPage({ doc, pageNumber, width, height, renderWidth, active }: PdfPageProps) {
+/**
+ * Una página. Reserva siempre su hueco (para que el scroll no salte) y solo dibuja el contenido cuando está cerca de lo visible. Va en `memo`: al cambiar de página visible
+ * solo cambian las que entran o salen del rango, y las otras (hasta 500) no deben repintarse.
+ */
+const PdfPage = memo(function PdfPage({ doc, pageNumber, width, height, renderWidth, active }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -247,4 +250,4 @@ function PdfPage({ doc, pageNumber, width, height, renderWidth, active }: PdfPag
       <canvas ref={canvasRef} aria-label={`Página ${pageNumber}`} className="block h-full w-full" />
     </div>
   );
-}
+});

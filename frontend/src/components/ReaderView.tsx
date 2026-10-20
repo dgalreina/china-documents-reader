@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { HEADER_HEIGHT } from '../lib/layout';
 import { clamp, usePinch } from '../lib/usePinch';
@@ -10,6 +10,7 @@ import type { JumpTarget } from '../types';
 const MIN_TEXT_SCALE = 0.8; // el pellizco cambia el tamaño del texto entre estos límites (1 = el tamaño normal)
 const MAX_TEXT_SCALE = 2.4;
 const BASE_FONT_PX = 16;
+const NEAR_PAGES = 8; // las páginas lejanas de la que lees son un hueco vacío (sin contenido): con cientos de páginas, pintarlas todas hacía muy lento el móvil
 const PLACEHOLDER_HEIGHT = 1000; // px mínimos de una página sin traducir (más o menos lo que ocupa una página en español)
 
 interface ReaderViewProps {
@@ -167,7 +168,8 @@ export function ReaderView({ doc, translations, target, onPageChange, ocrPages =
               page={page}
               state={translations.pages[page]}
               english={Math.abs(page - current) <= ENGLISH_WINDOW ? english[page] : undefined}
-              onRetry={() => translations.retry(page)}
+              near={Math.abs(page - current) <= NEAR_PAGES}
+              onRetry={translations.retry}
             />
           );
         })}
@@ -180,11 +182,22 @@ interface ReaderPageProps {
   page: number;
   state: Translations['pages'][number] | undefined;
   english: string | undefined;
-  onRetry: () => void;
+  /** Cerca de la que se lee. Las lejanas, si aún no tienen traducción, son un hueco vacío de la misma altura. */
+  near: boolean;
+  /** Estable (no cambia entre renderizados): así `memo` evita repintar páginas que no han cambiado. */
+  onRetry: (page: number) => void;
 }
 
-function ReaderPage({ page, state, english, onRetry }: ReaderPageProps) {
+/**
+ * Una página del lector. Va en `memo`: con un libro de 500 páginas, cada traducción o cada texto en inglés que llegaba repintaba las 500 (unos 5.000 elementos), y en un móvil
+ * eso eran segundos de bloqueo al desplazarse. Ahora solo se repintan las páginas cuyo contenido cambió.
+ */
+const ReaderPage = memo(function ReaderPage({ page, state, english, near, onRetry }: ReaderPageProps) {
   const done = state?.status === 'done';
+  if (!near && !done && state?.status !== 'error') {
+    // Hueco con la misma altura (y el mismo borde) que la página sin traducir, para que el scroll no se mueva.
+    return <div data-page={page} className="border-b border-line" style={{ height: PLACEHOLDER_HEIGHT }} aria-hidden="true" />;
+  }
   return (
     <article data-page={page} className="border-b border-line px-5 py-6 md:px-8" style={done ? undefined : { minHeight: PLACEHOLDER_HEIGHT }}>
       <div className="mb-3 flex items-center justify-between text-xs font-semibold text-stone">
@@ -216,7 +229,7 @@ function ReaderPage({ page, state, english, onRetry }: ReaderPageProps) {
           {state?.status === 'error' && (
             <div className="mb-3 flex items-center gap-3 text-sm">
               <span className="text-seal-dark">{state.message}</span>
-              <button onClick={onRetry} className="rounded border border-line bg-white px-2 py-1 font-semibold hover:border-seal">
+              <button onClick={() => onRetry(page)} className="rounded border border-line bg-white px-2 py-1 font-semibold hover:border-seal">
                 Reintentar
               </button>
             </div>
@@ -236,4 +249,4 @@ function ReaderPage({ page, state, english, onRetry }: ReaderPageProps) {
       )}
     </article>
   );
-}
+});

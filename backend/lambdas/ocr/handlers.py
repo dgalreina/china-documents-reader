@@ -47,6 +47,17 @@ class OcrFailed(Exception):
     """El OCR no pudo hacerse (Textract lo rechazó, por ejemplo). El mensaje queda como motivo del trabajo."""
 
 
+def textract_problem(error: Exception) -> str | None:
+    """Un motivo en español para los fallos de Textract que el usuario puede entender y resolver; None si es otra cosa (entonces se deja el error técnico en los registros)."""
+    code = getattr(error, "response", {}).get("Error", {}).get("Code")
+    if code == "SubscriptionRequiredException":
+        return "Amazon Textract no está activado en esta cuenta de AWS (las cuentas del plan gratuito pueden no incluirlo). Usa el OCR con OpenAI, o activa Textract en la cuenta."
+    if code in ("UnsupportedDocumentException", "BadDocumentException", "InvalidS3ObjectException", "DocumentTooLargeException"):
+        return f"Amazon Textract no puede leer este PDF ({code}). Prueba el OCR con OpenAI."
+    if code in ("AccessDeniedException", "ProvisionedThroughputExceededException", "LimitExceededException", "ThrottlingException"):
+        return f"Amazon Textract no pudo procesarlo ahora ({code}). Inténtalo de nuevo en unos minutos."
+    return None
+
 def _response(status: int, body: dict) -> dict:
     return {"statusCode": status, "headers": HEADERS, "body": json.dumps(body, ensure_ascii=False)}
 
@@ -148,10 +159,16 @@ def prepare_handler(event: dict, _context=None, textract=None) -> dict:
             import boto3
 
             textract = boto3.client("textract")
-        response = textract.start_document_text_detection(
-            DocumentLocation={"S3Object": {"Bucket": event["pdfBucket"], "Name": event["key"]}},
-            ClientRequestToken=str(event["jobId"])[:64],  # si el paso se repite, Textract no abre otro trabajo (y no se cobra dos veces)
-        )
+        try:
+            response = textract.start_document_text_detection(
+                DocumentLocation={"S3Object": {"Bucket": event["pdfBucket"], "Name": event["key"]}},
+                ClientRequestToken=str(event["jobId"])[:64],  # si el paso se repite, Textract no abre otro trabajo (y no se cobra dos veces)
+            )
+        except Exception as error:  # noqa: BLE001
+            friendly = textract_problem(error)
+            if friendly:
+                raise OcrFailed(friendly) from error
+            raise
         return {"textractJobId": response["JobId"]}
     return {"starts": list(range(0, int(event["pageCount"]), PAGES_PER_BATCH))}
 
@@ -162,7 +179,13 @@ def check_handler(event: dict, _context=None, textract=None) -> dict:
         import boto3
 
         textract = boto3.client("textract")
-    response = textract.get_document_text_detection(JobId=event["textractJobId"], MaxResults=1)
+    try:
+        response = textract.get_document_text_detection(JobId=event["textractJobId"], MaxResults=1)
+    except Exception as error:  # noqa: BLE001
+        friendly = textract_problem(error)
+        if friendly:
+            raise OcrFailed(friendly) from error
+        raise
     status = response.get("JobStatus")
     if status == "FAILED":
         raise OcrFailed(f"Textract no pudo leer el PDF: {response.get('StatusMessage') or 'motivo desconocido'}")

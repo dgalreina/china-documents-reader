@@ -26,7 +26,8 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
   const shown = jobs.filter((job) => !(job.kind === 'upload' && job.status === 'DONE') || finishedRecently(job, now));
   const active = shown.filter((job) => ACTIVE.has(job.status));
   const uploads = shown.filter((job) => !ACTIVE.has(job.status) && job.kind === 'upload'); // subidas recién terminadas o que fallaron
-  const analyses = shown.filter((job) => !ACTIVE.has(job.status) && job.kind !== 'upload');
+  const analyses = shown.filter((job) => !ACTIVE.has(job.status) && job.kind !== 'upload' && job.kind !== 'ocr');
+  const ocrs = shown.filter((job) => !ACTIVE.has(job.status) && job.kind === 'ocr');
   const titleOf = (job: Job) => job.title ?? books.find((book) => book.slug === job.slug)?.title ?? job.slug;
   const coverOf = (job: Job) => books.find((book) => book.slug === job.slug)?.coverUrl; // la portada es la del libro (la dibuja la subida)
 
@@ -49,6 +50,16 @@ export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
           <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone">Subidas</h3>
           <ul className="space-y-2">
             {uploads.map((job) => (
+              <JobCard key={job.jobId} job={job} title={titleOf(job)} coverUrl={coverOf(job)} onSelect={onSelect} />
+            ))}
+          </ul>
+        </section>
+      )}
+      {ocrs.length > 0 && (
+        <section aria-label="Reconocimiento de texto">
+          <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone">Reconocimiento de texto (OCR)</h3>
+          <ul className="space-y-2">
+            {ocrs.map((job) => (
               <JobCard key={job.jobId} job={job} title={titleOf(job)} coverUrl={coverOf(job)} onSelect={onSelect} />
             ))}
           </ul>

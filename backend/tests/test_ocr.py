@@ -379,3 +379,23 @@ def test_el_catalogo_enseña_si_tiene_capa_de_texto_y_el_ocr_y_firma_su_url():
     sin_ocr = {**item, "ocr": None}
     assert books_handler({"routeKey": "GET /books/{slug}/ocr-url", "pathParameters": {"slug": SLUG}}, books_table=Table([sin_ocr]), s3_client=S3())["statusCode"] == 404
     assert books_handler({"routeKey": "GET /books/{slug}/ocr-url", "pathParameters": {"slug": "../x"}}, books_table=Table([item]), s3_client=S3())["statusCode"] == 400
+
+
+def test_los_fallos_de_textract_que_el_usuario_puede_resolver_salen_en_espanol_y_sin_tecnicismos():
+    class Rejecting:
+        def __init__(self, code):
+            self.code = code
+
+        def start_document_text_detection(self, **_):
+            error = Exception("An error occurred")
+            error.response = {"Error": {"Code": self.code}}
+            raise error
+
+    event = {"jobId": "j", "engine": "textract", "pdfBucket": "libros", "key": "k", "pageCount": 3}
+    with pytest.raises(ocr.OcrFailed, match="no está activado en esta cuenta"):
+        ocr.prepare_handler(event, textract=Rejecting("SubscriptionRequiredException"))
+    with pytest.raises(ocr.OcrFailed, match="UnsupportedDocumentException.*OpenAI"):
+        ocr.prepare_handler(event, textract=Rejecting("UnsupportedDocumentException"))
+    with pytest.raises(Exception) as other:  # un fallo desconocido NO se disfraza: sigue siendo el error técnico (queda en los registros)
+        ocr.prepare_handler(event, textract=Rejecting("ValorRaro"))
+    assert not isinstance(other.value, ocr.OcrFailed)
