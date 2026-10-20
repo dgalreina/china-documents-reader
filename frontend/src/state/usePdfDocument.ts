@@ -7,6 +7,18 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'; // solo la dire
  * JavaScript principal. Así la pantalla de entrada y la lista de libros aparecen sin esperar a pdf.js. `loadPdfjs()` se puede llamar antes de necesitarlo (App lo hace
  * nada más arrancar) para que se vaya descargando mientras se carga la lista; llamarlo varias veces no lo descarga dos veces.
  */
+/**
+ * Dónde están los ficheros auxiliares de pdf.js (los publica vite.config.ts bajo /pdfjs/). Sin ellos, los PDF escaneados (imágenes JBIG2/JPEG2000/con perfil de color) se ven
+ * EN BLANCO y sin error, y las tipografías chinas sin incrustar salen mal.
+ */
+export const PDFJS_ASSETS = {
+  wasmUrl: '/pdfjs/wasm/',
+  iccUrl: '/pdfjs/iccs/',
+  cMapUrl: '/pdfjs/cmaps/',
+  cMapPacked: true,
+  standardFontDataUrl: '/pdfjs/standard_fonts/',
+};
+
 let pdfjsPromise: Promise<typeof import('pdfjs-dist')> | null = null;
 export function loadPdfjs(): Promise<typeof import('pdfjs-dist')> {
   pdfjsPromise ??= import('pdfjs-dist').then((pdfjs) => {
@@ -41,7 +53,7 @@ export function usePdfDocument(url: string | undefined): PdfState {
     loadPdfjs()
       .then((pdfjs) => {
         if (cancelled) return;
-        task = pdfjs.getDocument({ url });
+        task = pdfjs.getDocument({ url, ...PDFJS_ASSETS });
         return task.promise.then(async (loaded) => {
           if (cancelled) return; // la limpieza ya destruyó la tarea de carga, y con ella el documento
           const viewport = (await loaded.getPage(1)).getViewport({ scale: 1 });
