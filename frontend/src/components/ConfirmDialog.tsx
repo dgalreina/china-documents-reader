@@ -11,6 +11,8 @@ interface ConfirmDialogProps {
   busy: boolean;
   /** Mensaje si falló, para enseñarlo dentro del diálogo y poder reintentar. */
   error?: string | null;
+  /** Desactiva el botón de confirmar (p. ej. mientras aún se está calculando lo que se va a confirmar). Cancelar sigue funcionando. */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -19,7 +21,7 @@ interface ConfirmDialogProps {
  * Un diálogo de confirmación (para lo que no se puede deshacer o cuesta dinero). El foco empieza en "Cancelar" (la opción segura), Escape o tocar fuera cancelan, y mientras
  * se trabaja no se puede cerrar. Se dibuja en el `body` con un portal: el panel lateral se mueve con `translate`, y eso encerraría y recortaría un `fixed` dentro.
  */
-export function ConfirmDialog({ title, children, confirmLabel, busyLabel, busy, error, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ title, children, confirmLabel, busyLabel, busy, error, confirmDisabled, onConfirm, onCancel }: ConfirmDialogProps) {
   const titleId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -58,7 +60,7 @@ export function ConfirmDialog({ title, children, confirmLabel, busyLabel, busy, 
           <button ref={cancelRef} onClick={onCancel} disabled={busy} className="rounded-lg border border-ink/15 bg-white px-3 py-1.5 text-sm font-semibold text-ink-soft hover:text-ink disabled:opacity-40">
             Cancelar
           </button>
-          <button onClick={onConfirm} disabled={busy} className="rounded-lg bg-seal px-3 py-1.5 text-sm font-semibold text-on-seal hover:bg-seal-dark disabled:opacity-60">
+          <button onClick={onConfirm} disabled={busy || confirmDisabled} className="rounded-lg bg-seal px-3 py-1.5 text-sm font-semibold text-on-seal hover:bg-seal-dark disabled:opacity-60">
             {busy ? busyLabel : confirmLabel}
           </button>
         </div>

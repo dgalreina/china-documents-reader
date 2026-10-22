@@ -15,7 +15,7 @@ from decimal import Decimal
 from ..presign.signer import SOURCE_PATTERN
 
 PDF_URL_SECONDS = 6 * 3600  # pdf.js pide trozos del PDF mientras lees: la URL debe durar lo que una sesión de lectura
-PUBLIC_FIELDS = ("slug", "title", "filename", "pageCount", "analysis", "textLayer", "ocr", "jobId", "createdAt", "updatedAt", "stats")
+PUBLIC_FIELDS = ("slug", "title", "filename", "pageCount", "analysis", "textLayer", "ocr", "jobId", "createdAt", "updatedAt", "stats", "published")
 OCR_URL_SECONDS = 3600  # el navegador lo baja entero una vez al abrir el libro
 COVER_URL_SECONDS = 6 * 3600  # como la del PDF: dura lo que una sesión
 HEADERS = {"Content-Type": "application/json"}

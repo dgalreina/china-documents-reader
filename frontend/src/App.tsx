@@ -11,6 +11,7 @@ import { PdfViewer } from './components/PdfViewer';
 import { ReaderView } from './components/ReaderView';
 import { AgentTab } from './components/tabs/AgentTab';
 import { FilesTab } from './components/tabs/FilesTab';
+import { PublishDialog } from './components/PublishDialog';
 import { HitosTab } from './components/tabs/HitosTab';
 import { PersonajesTab } from './components/tabs/PersonajesTab';
 import { ProgressTab } from './components/tabs/ProgressTab';
@@ -71,7 +72,7 @@ const Message = ({ children }: { children: React.ReactNode }) => <div className=
 function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { api: client, books, jobs, loaded, error, reload, upload, analyze, startOcr, remove } = useLibrary();
+  const { api: client, books, jobs, loaded, error, reload, upload, analyze, startOcr, remove, previewPublish, publish, unpublish } = useLibrary();
   const book = books.find((candidate) => candidate.slug === slug);
   const pendingJob = !book && slug ? jobs.find((job) => job.slug === slug) : undefined;
 
@@ -82,6 +83,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
   const [target, setTarget] = useState<JumpTarget | null>(null);
   const [mode, setMode] = useState<ReadMode>(loadMode);
   const [ocring, setOcring] = useState<Book | null>(null); // el libro escaneado cuyo OCR se está a punto de pedir (se elige el motor y se confirma el coste)
+  const [publishing, setPublishing] = useState<Book | null>(null); // el libro que se está a punto de publicar en producción (vista previa y confirmación)
   const [analyzing, setAnalyzing] = useState<Book | null>(null); // el libro cuyo análisis se está a punto de pedir (se confirma el coste antes)
 
   // Hitos y personajes de TODOS los libros; se vuelven a pedir cuando cambia alguno (p. ej. al terminar un análisis o al borrar un libro).
@@ -225,11 +227,12 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
                 jobs={jobs}
                 onAnalyze={setAnalyzing}
                 onOcr={setOcring}
+                onPublish={setPublishing}
                 currentSlug={book?.slug}
                 onSelect={select}
                 onSignOut={onSignOut}
-                onDelete={async (deleted) => {
-                  await remove(deleted);
+                onDelete={async (deleted, options) => {
+                  await remove(deleted, options);
                   if (deleted === slug) navigate('/'); // el libro abierto ya no existe: al inicio, que abre el más reciente o la pantalla vacía
                 }}
                 onUpload={async (file, options) => {
@@ -249,6 +252,7 @@ function Workspace({ onSignOut }: { onSignOut: () => void }) {
           }}
         />
       {ocring && <OcrDialog book={ocring} onConfirm={startOcr} onClose={() => setOcring(null)} />}
+      {publishing && <PublishDialog book={books.find((b) => b.slug === publishing.slug) ?? publishing} jobs={jobs} onPreview={previewPublish} onPublish={publish} onUnpublish={unpublish} onClose={() => setPublishing(null)} />}
       {analyzing && <AnalyzeDialog book={analyzing} jobs={jobs} onConfirm={analyze} onClose={() => setAnalyzing(null)} />}
     </div>
   );

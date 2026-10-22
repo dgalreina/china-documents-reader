@@ -278,6 +278,17 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   Luoyang) con una ficha curada llamada 'State of Qi/Zhou'; la precision depende de que sitio se pidio (`precision_of(matched, site)`), no solo del nombre de la ficha. El tool de terminal se come las barras invertidas: los
   scripts con regex (``) se escriben con el Write tool, o el `` acaba siendo un caracter de retroceso invisible (ya paso dos veces).
 
+  **Publicar en producción (hecho, probado con bases falsas y vista previa real de solo lectura, sin desplegar):** boton por libro analizado en Archivos ('Publicar en producción' / 'Actualizar' si el libro cambió
+  después / 'En producción' para gestionarlo). Flujo: `POST /books/{slug}/publish` con `{dryRun}` OBLIGATORIO y booleano (nunca escribe por omisión) -> Lambda `publish` apunta un trabajo `kind: publish` y lanza `PublishRunFn`
+  de forma asíncrona (API Gateway corta a 29 s) -> el resumen queda en el trabajo y la web (`PublishDialog`) lo enseña: SIEMPRE vista previa primero (fragmentos, hitos nuevos, duplicados descartados, si reemplaza una
+  publicación anterior) y solo entonces se puede confirmar. Reutiliza `write_chunks`/`write_hitos` con el destino prod: mismo contrato, mismo upsert, misma deduplicación contra lo que ya hay en producción (los 1259
+  de china-history incluidos). Solo `book_chunks` y `hitos_conocidos`, solo documentos con nuestro `origen`; los hitos van SIN `personajes` (china-history aún no tiene fichas) y sin `_id` de dev. Publicar de nuevo
+  reemplaza (jobId nuevo + `cleanup_old_runs`). `DELETE /books/{slug}/publish` despublica; `DELETE /books/{slug}?unpublish=1` borra el libro y además su copia de producción (casilla en el diálogo de borrado).
+  Destino: `prod_target()` usa `MONGODB_URI_PROD` y, si no existe, la URI de dev (mismo usuario de Atlas, que ya llega a las dos bases); lo que decide DÓNDE se escribe es el nombre de la base (`MONGODB_DB_PROD`,
+  por defecto `china-history`), que nunca puede coincidir con la de dev. Un `source` ocupado en producción por chunks SIN nuestra marca se rechaza antes de escribir. Catálogo: `published {at, chunks, hitos, jobId}`.
+  Vista previa real (solo lectura) del Records: 968 fragmentos, 26 hitos (1 descartado como duplicado de otro hito del mismo libro), nada previo publicado, coste ≈ $0,011. Pendiente: personajes en producción
+  (cuando china-history los lea), publicación automática al terminar el análisis (hoy solo botón) y `fuentesAdicionales` para hitos deduplicados.
+
 ## Ideas apuntadas (sin implementar)
 
 - **Libros escaneados / imagenes sueltas (para el FINAL, decidido con el usuario):** hoy un PDF sin texto acaba en `NEEDS_OCR`. Un solo paso de OCR por paginas

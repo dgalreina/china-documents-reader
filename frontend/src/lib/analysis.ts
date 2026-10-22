@@ -14,10 +14,10 @@ export interface AnalysisState {
  *  - hay un análisis en marcha -> "running" (aunque el libro ya estuviera analizado: es un reanálisis);
  *  - analizado -> "done" (un reanálisis que falló no estropea el análisis anterior: sigue ahí);
  *  - sin analizar: si el último intento falló, se dice por qué (hasta que el registro caduca a los 30 días); si no, "none".
- * Los trabajos de SUBIDA y de OCR no cuentan: son otra cosa.
+ * Los trabajos de SUBIDA, de OCR y de PUBLICACIÓN no cuentan: son otra cosa.
  */
 export function analysisState(book: Book, jobs: Job[]): AnalysisState {
-  const attempts = jobs.filter((job) => job.slug === book.slug && job.kind !== 'upload' && job.kind !== 'ocr'); // sin `kind` = trabajos antiguos, que eran análisis
+  const attempts = jobs.filter((job) => job.slug === book.slug && job.kind !== 'upload' && job.kind !== 'ocr' && job.kind !== 'publish'); // sin `kind` = trabajos antiguos, que eran análisis
   if (attempts.some((job) => job.status === 'RUNNING' || job.status === 'QUEUED')) return { status: 'running' };
   if (book.analysis === 'done') return { status: 'done' };
   const last = [...attempts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];

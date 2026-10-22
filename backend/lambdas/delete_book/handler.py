@@ -15,6 +15,7 @@ from shared.jobstate import busy_job, scan_all
 from shared.storage import S3Storage, Storage
 
 from ..presign.signer import SOURCE_PATTERN
+from ..publish.core import prod_target, unpublish_book
 from ..write_mongo.store import cached_database
 from .purge import purge_mongo, purge_storage
 
@@ -45,6 +46,7 @@ def handler(
     jobs_table=None,
     storage: Storage | None = None,
     now: float | None = None,
+    prod=None,
 ) -> dict:
     slug = (event.get("pathParameters") or {}).get("slug", "")
     if event.get("routeKey") != "DELETE /books/{slug}":
@@ -54,6 +56,7 @@ def handler(
 
     books_table = books_table or _books_table()
     jobs_table = jobs_table or _jobs_table()
+    unpublished = None
     try:
         item = books_table.get_item(Key={"slug": slug}).get("Item")
         jobs = [job for job in scan_all(jobs_table) if job.get("source") == slug]
@@ -62,6 +65,9 @@ def handler(
         if busy_job(jobs_table, slug, now if now is not None else time.time()):
             return _response(409, {"error": "El libro se está analizando o subiendo. Espera a que termine para borrarlo."})
 
+        # Opcional (?unpublish=1): quitar también la copia publicada en producción. Va PRIMERO: si falla, el libro sigue entero y se puede reintentar.
+        if (event.get("queryStringParameters") or {}).get("unpublish") == "1":
+            unpublished = unpublish_book(prod or prod_target(), slug)
         mongo = purge_mongo(db if db is not None else cached_database(os.environ.get("MONGO_TARGET", "dev")), slug)
         files = purge_storage(storage or S3Storage(), os.environ["BOOKS_BUCKET"], os.environ["UPLOAD_BUCKET"], slug, [job["jobId"] for job in jobs])
         for job in jobs:
@@ -70,4 +76,4 @@ def handler(
     except Exception as error:  # noqa: BLE001 — al navegador solo un aviso genérico; el detalle queda en los logs
         print(f"delete_book falló ({slug}): {type(error).__name__}")
         return _response(502, {"error": "No se pudo borrar el libro del todo. Vuelve a intentarlo: es seguro repetirlo."})
-    return _response(200, {"deleted": {"mongo": mongo, "archivos": files, "trabajos": len(jobs)}})
+    return _response(200, {"deleted": {"mongo": mongo, "archivos": files, "trabajos": len(jobs), "produccion": unpublished}})

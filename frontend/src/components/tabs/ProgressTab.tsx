@@ -12,7 +12,8 @@ interface ProgressTabProps {
 
 const ACTIVE = new Set(['UPLOADING', 'QUEUED', 'RUNNING']);
 
-export function ProgressTab({ jobs, books, onSelect }: ProgressTabProps) {
+export function ProgressTab({ jobs: allJobs, books, onSelect }: ProgressTabProps) {
+  const jobs = allJobs.filter((job) => job.kind !== 'publish'); // publicar se sigue desde su diálogo y desde la etiqueta del libro, no aquí
   // Una subida terminada ya es un libro en Archivos: aquí solo se queda unos segundos ("Listo") para que no desaparezca de golpe. Se ven las que están en marcha,
   // las que fallaron y los análisis. Cuando caduca la última subida reciente, hace falta volver a pintar (nada más lo provocaría).
   const [now, setNow] = useState(() => Date.now());

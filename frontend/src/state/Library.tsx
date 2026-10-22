@@ -17,8 +17,14 @@ interface LibraryValue {
   analyze: (slug: string) => Promise<void>;
   /** Arranca el OCR de un libro escaneado con el motor elegido y refresca la lista. */
   startOcr: (slug: string, engine: OcrEngine) => Promise<void>;
-  /** Borra un libro con todo lo suyo y refresca la lista. */
-  remove: (slug: string) => Promise<void>;
+  /** Borra un libro con todo lo suyo (y, si se pide, su copia en producción) y refresca la lista. */
+  remove: (slug: string, options?: { unpublish?: boolean }) => Promise<void>;
+  /** Vista previa de publicar un libro en producción (no escribe nada). */
+  previewPublish: (slug: string) => Promise<{ jobId: string }>;
+  /** Publica el libro en producción. */
+  publish: (slug: string) => Promise<void>;
+  /** Quita el libro de producción. */
+  unpublish: (slug: string) => Promise<void>;
 }
 
 const LibraryContext = createContext<LibraryValue | null>(null);
@@ -90,8 +96,21 @@ export function LibraryProvider({ api, children }: { api: ApiClient; children: R
         await api.startOcr(slug, engine);
         await refresh();
       },
-      remove: async (slug) => {
-        await api.deleteBook(slug);
+      remove: async (slug, options) => {
+        await api.deleteBook(slug, options);
+        await refresh();
+      },
+      previewPublish: async (slug) => {
+        const started = await api.previewPublish(slug);
+        await refresh();
+        return started;
+      },
+      publish: async (slug) => {
+        await api.publishBook(slug);
+        await refresh();
+      },
+      unpublish: async (slug) => {
+        await api.unpublishBook(slug);
         await refresh();
       },
     }),

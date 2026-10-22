@@ -238,3 +238,22 @@ def test_slugs_peligrosos_son_400_y_no_tocan_nada(tmp_path, slug):
 
 def test_una_ruta_distinta_es_404():
     assert handler({"routeKey": "GET /books/{slug}"})["statusCode"] == 404
+
+
+def test_con_unpublish_tambien_se_quita_de_produccion_y_antes_que_lo_demas(tmp_path, monkeypatch):
+    from lambdas.delete_book import handler as delete_handler
+
+    calls = []
+    monkeypatch.setattr(delete_handler, "unpublish_book", lambda target, slug: calls.append((target, slug)) or {"chunks": 3, "hitos": 1})
+    storage, books, jobs_table = setup(tmp_path, [job("j1", "DONE")])
+    event = {"routeKey": "DELETE /books/{slug}", "pathParameters": {"slug": "lib-a"}, "queryStringParameters": {"unpublish": "1"}}
+    response = handler(event, db=world(), books_table=books, jobs_table=jobs_table, storage=storage, now=NOW, prod="PROD")
+    assert calls == [("PROD", "lib-a")] and json.loads(response["body"])["deleted"]["produccion"] == {"chunks": 3, "hitos": 1}
+
+
+def test_sin_unpublish_producción_no_se_toca(tmp_path, monkeypatch):
+    from lambdas.delete_book import handler as delete_handler
+
+    monkeypatch.setattr(delete_handler, "unpublish_book", lambda *a: pytest.fail("no debe tocar producción"))
+    storage, books, jobs_table = setup(tmp_path, [job("j1", "DONE")])
+    assert delete("lib-a", storage, books, jobs_table)[0] == 200

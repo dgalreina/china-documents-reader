@@ -189,6 +189,10 @@ export class ChinaDocumentsStack extends cdk.Stack {
     const ocrFinish = fn('OcrFinishFn', 'lambdas.ocr.handlers.finish_handler', 120, 512);
     // Borra un libro y TODO lo que es solo suyo (Mongo, S3, trabajos y catálogo). Los permisos más amplios de la app: va detrás del login y del límite de peticiones.
     const deleteBook = fn('DeleteBookFn', 'lambdas.delete_book.handler.handler', 60, 512);
+    // Publicar en producción (ver backend/lambdas/publish): `PublishFn` atiende la API (apunta el trabajo y despublica); `PublishRunFn` hace el trabajo largo, invocada sin esperar
+    // (API Gateway corta a los 29 s). 15 min es el máximo de Lambda; 1,5 GB porque lee de dev todos los fragmentos del libro con sus vectores (~30 KB cada uno).
+    const publishApi = fn('PublishFn', 'lambdas.publish.handler.handler', 29, 512);
+    const publishRun = fn('PublishRunFn', 'lambdas.publish.handler.run_handler', 900, 1536);
     const translate = fn('TranslatePageFn', 'lambdas.translate_page.handler.handler', 29, 512);
 
     // Permisos mínimos para cada una.
@@ -205,6 +209,13 @@ export class ChinaDocumentsStack extends cdk.Stack {
     // analyze: mira el libro y los trabajos en curso y apunta el análisis; arrancar Step Functions se concede más abajo, cuando existe la máquina.
     booksTable.grantReadData(analyze);
     jobs.grantReadWriteData(analyze);
+    // publicar: la API mira el libro y los trabajos, apunta el trabajo, lanza la ejecución y, al despublicar, quita la marca del catálogo; la ejecución apunta el resultado.
+    booksTable.grantReadWriteData(publishApi);
+    jobs.grantReadWriteData(publishApi);
+    publishRun.grantInvoke(publishApi);
+    publishApi.addEnvironment('PUBLISH_RUN_FUNCTION', publishRun.functionName);
+    booksTable.grantWriteData(publishRun);
+    jobs.grantReadWriteData(publishRun);
     // OCR. Textract no admite permisos por recurso (solo "*"), y lee el PDF de S3 CON los permisos de quien lo llama: por eso esas Lambdas pueden leer el bucket de libros.
     const textractAccess = new iam.PolicyStatement({ actions: ['textract:StartDocumentTextDetection', 'textract:GetDocumentTextDetection'], resources: ['*'] });
     for (const f of [ocrPrepare, ocrCheck, ocrCollect]) f.addToRolePolicy(textractAccess);
@@ -232,7 +243,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
       actions: ['ssm:GetParameter'],
       resources: [cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: `${ssmPrefix.replace(/^\//, '')}/*`, arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME }, this)],
     });
-    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook, ingest, ocrPages]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos, deleteBook e ingest (al reemplazar un libro): la URI de Mongo
+    for (const f of [embedPeriod, embedBatch, extractHitos, writeChunks, writeHitos, finalize, translate, readHitos, deleteBook, ingest, ocrPages, publishApi, publishRun]) f.addToRolePolicy(readSecrets); // translate: la clave de OpenAI; readHitos, deleteBook e ingest (al reemplazar un libro): la URI de Mongo
 
     // ------------------------------------------------------------------------------------------------- Step Functions
     const jobKey = { jobId: tasks.DynamoAttributeValue.fromString(sfn.JsonPath.stringAt('$.jobId')) };
@@ -615,6 +626,7 @@ export class ChinaDocumentsStack extends cdk.Stack {
     api.addRoutes({ path: '/books', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookListIntegration', booksApi) });
     api.addRoutes({ path: '/books/{slug}/pdf-url', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPdfIntegration', booksApi) });
     api.addRoutes({ path: '/books/{slug}/analyze', methods: [apigw.HttpMethod.POST], integration: new integrations.HttpLambdaIntegration('BookAnalyzeIntegration', analyze) });
+    api.addRoutes({ path: '/books/{slug}/publish', methods: [apigw.HttpMethod.POST, apigw.HttpMethod.DELETE], integration: new integrations.HttpLambdaIntegration('BookPublishIntegration', publishApi) });
     api.addRoutes({ path: '/books/{slug}', methods: [apigw.HttpMethod.DELETE], integration: new integrations.HttpLambdaIntegration('BookDeleteIntegration', deleteBook) });
     api.addRoutes({ path: '/books/{slug}/hitos', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookHitosIntegration', readHitos) });
     api.addRoutes({ path: '/books/{slug}/personajes', methods: [apigw.HttpMethod.GET], integration: new integrations.HttpLambdaIntegration('BookPersonajesIntegration', readHitos) });

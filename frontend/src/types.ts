@@ -30,6 +30,14 @@ export interface Book {
   textLayer?: boolean;
   /** El OCR que se le hizo, si se le hizo. */
   ocr?: BookOcr;
+  /** Si el libro está publicado en producción (la base que lee china-history): cuándo y cuánto. Sin el campo = no publicado. */
+  published?: BookPublished;
+}
+
+export interface BookPublished {
+  at: string;
+  chunks: number;
+  hitos: number;
 }
 
 export type OcrEngine = 'textract' | 'openai';
@@ -44,7 +52,7 @@ export interface BookOcr {
 }
 
 /** "upload": la subida del PDF y su preparación; "analysis": el análisis (hitos, personajes), que se pide con el botón Analizar; "ocr": reconocer el texto de un escaneado. */
-export type JobKind = 'upload' | 'analysis' | 'ocr';
+export type JobKind = 'upload' | 'analysis' | 'ocr' | 'publish';
 
 export interface Job {
   jobId: string;
@@ -64,8 +72,32 @@ export interface Job {
   queuePosition?: number;
   error?: string;
   stats?: BookStats;
+  /** Solo en trabajos de publicación: true = era la vista previa (no escribió nada). */
+  dryRun?: boolean;
+  /** Solo en trabajos de publicación terminados: lo que se publicó (o publicaría, en la vista previa). */
+  publish?: PublishSummary;
   createdAt: string;
   finishedAt?: string;
+}
+
+/** El resultado de publicar un libro en producción (o de su vista previa). */
+export interface PublishSummary {
+  chunks: number;
+  chunksReplaced: number;
+  hitos: number;
+  hitosReplaced: number;
+  /** Hitos que ya existían en producción (con otras palabras) y por eso no se publican. */
+  duplicates: PublishDuplicate[];
+  duplicateCount: number;
+  /** Lo que ya había publicado de este libro antes. */
+  before: { chunks: number; hitos: number };
+}
+
+export interface PublishDuplicate {
+  titulo: string;
+  año: number;
+  existente?: string;
+  fuente?: string;
 }
 
 export interface PersonajeRef {

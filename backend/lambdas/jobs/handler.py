@@ -12,7 +12,7 @@ from decimal import Decimal
 
 JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 # Campos que se devuelven. El resto del registro (expiresAt, etc.) es interno.
-PUBLIC_FIELDS = ("jobId", "kind", "status", "filename", "source", "title", "replaceSource", "pageCount", "createdAt", "startedAt", "finishedAt", "error")
+PUBLIC_FIELDS = ("jobId", "kind", "status", "dryRun", "filename", "source", "title", "replaceSource", "pageCount", "createdAt", "startedAt", "finishedAt", "error")
 LIST_LIMIT = 30  # los trabajos más recientes; los registros caducan solos a los 30 días
 HEADERS = {"Content-Type": "application/json"}
 

@@ -3,6 +3,7 @@ import { analysisState, type AnalysisStatus } from '../../lib/analysis';
 import { MAX_PDF_MB, isValidSlug, suggestSlug, suggestTitle, validatePdf } from '../../lib/files';
 import { formatPercent } from '../../lib/format';
 import { OCR_ENGINE_NAME, needsOcr, ocrState } from '../../lib/ocr';
+import { publishState, type PublishState } from '../../lib/publish';
 import { pendingUploads } from '../../lib/uploads';
 import type { Book, Job } from '../../types';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -37,30 +38,34 @@ interface FilesTabProps {
   onAnalyze?: (book: Book) => void;
   /** Pide reconocer el texto de un libro escaneado (OCR; la web enseña antes lo que costará y deja elegir el motor). */
   onOcr?: (book: Book) => void;
+  /** Pide publicar un libro en producción (la web enseña antes una vista previa y pide confirmar). */
+  onPublish?: (book: Book) => void;
   /** Cierra la sesión. */
   onSignOut?: () => void;
-  /** Borra un libro con todo lo suyo. Rechaza con un mensaje en español. */
-  onDelete?: (slug: string) => Promise<void>;
+  /** Borra un libro con todo lo suyo (con `unpublish`, también su copia en producción). Rechaza con un mensaje en español. */
+  onDelete?: (slug: string, options?: { unpublish?: boolean }) => Promise<void>;
 }
 
-export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnalyze, onOcr, onSignOut, onDelete }: FilesTabProps) {
+export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnalyze, onOcr, onPublish, onSignOut, onDelete }: FilesTabProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [pending, setPending] = useState<Book | null>(null); // el libro que se está a punto de borrar
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [alsoUnpublish, setAlsoUnpublish] = useState(false); // al borrar un libro publicado: ¿quitarlo también de producción?
   const uploading = pendingUploads(jobs, books, Date.now()); // los libros que se están subiendo y todavía no están en el catálogo
 
   const closeDialog = () => {
     setPending(null);
     setDeleteError(null);
+    setAlsoUnpublish(false);
   };
   const confirmDelete = async () => {
     if (!pending || !onDelete) return;
     setDeleting(true);
     setDeleteError(null);
     try {
-      await onDelete(pending.slug);
-      setPending(null);
+      await onDelete(pending.slug, pending.published && alsoUnpublish ? { unpublish: true } : undefined);
+      closeDialog();
     } catch (problem) {
       setDeleteError(problem instanceof Error ? problem.message : 'No se pudo borrar el libro.');
     } finally {
@@ -98,6 +103,7 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
           {books.map((book) => {
             const analysis = analysisState(book, jobs);
             const ocr = ocrState(book, jobs);
+            const publication = publishState(book, jobs);
             const scanned = needsOcr(book);
             const current = book.slug === currentSlug;
             return (
@@ -119,6 +125,8 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
                       {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin datos de páginas'}
                       {analysis.status === 'done' && book.stats && book.stats.hitos > 0 ? ` · ${book.stats.hitos} hitos · ${book.stats.personajes} personajes` : ''}
                     </div>
+                    {publication.status === 'published' && <p className="mt-1 text-xs text-stone">En producción: {book.published?.chunks} fragmentos · {book.published?.hitos} hitos.</p>}
+                    {publication.status === 'outdated' && <p className="mt-1 text-xs text-amber-800">Publicado en producción, pero el libro ha cambiado desde entonces.</p>}
                     {book.ocr && <p className="mt-1 text-xs text-stone">Texto reconocido con {OCR_ENGINE_NAME[book.ocr.engine]}.</p>}
                     {scanned && ocr.status !== 'running' && <p className="mt-1 text-xs text-stone">Es un escaneado: sin OCR no se puede traducir ni analizar.</p>}
                     {ocr.status === 'failed' && <p className="mt-1 text-xs text-red-700">{ocr.error ?? 'El OCR falló.'}</p>}
@@ -139,6 +147,7 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
                   ) : (
                     <span className="flex items-center gap-3">
                       <AnalyzeAction status={analysis.status} onClick={onAnalyze ? () => onAnalyze(book) : undefined} />
+                      {analysis.status === 'done' && onPublish && <PublishAction state={publication} onClick={() => onPublish(book)} />}
                       {book.ocr && onOcr && (
                         <button onClick={() => onOcr(book)} className="text-xs font-semibold text-stone underline decoration-line underline-offset-2 hover:text-ink">
                           Repetir OCR
@@ -172,6 +181,12 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
             <li>sus hitos y los personajes que solo aparecen en él,</li>
             <li>los datos de su análisis.</li>
           </ul>
+          {pending.published && (
+            <label className="flex items-start gap-2 rounded border border-line bg-white p-2 text-ink">
+              <input type="checkbox" checked={alsoUnpublish} onChange={(event) => setAlsoUnpublish(event.target.checked)} disabled={deleting} className="mt-0.5" />
+              <span>Quitar también de producción (china-history dejará de ver sus fragmentos y hitos). Si no, se quedan allí.</span>
+            </label>
+          )}
           <p className="font-semibold text-ink">No se puede deshacer.</p>
         </ConfirmDialog>
       )}
@@ -200,6 +215,23 @@ function UploadingCard({ job }: { job: Job }) {
         </div>
       </div>
     </li>
+  );
+}
+
+/** La acción de publicación de la tarjeta: publicar, actualizar lo publicado (el libro cambió) o gestionarlo si ya está al día. Mientras corre, solo un aviso. */
+function PublishAction({ state, onClick }: { state: PublishState; onClick: () => void }) {
+  if (state.status === 'running') return <span className="text-xs text-stone">{state.preview ? 'Comprobando…' : 'Publicando…'}</span>;
+  if (state.status === 'published') {
+    return (
+      <button onClick={onClick} className="text-xs font-semibold text-stone underline decoration-line underline-offset-2 hover:text-ink">
+        En producción
+      </button>
+    );
+  }
+  return (
+    <button onClick={onClick} className="rounded-md border border-ink/25 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-ink hover:text-paper">
+      {state.status === 'outdated' ? 'Actualizar en producción' : 'Publicar en producción'}
+    </button>
   );
 }
 

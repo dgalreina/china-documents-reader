@@ -1,5 +1,5 @@
 import { isValidSlug, validatePdf } from '../lib/files';
-import type { Book, BookStats, Fuente, Hito, Job, OcrEngine, PageTranslation, Personaje } from '../types';
+import type { Book, BookStats, Fuente, Hito, Job, OcrEngine, PageTranslation, Personaje, PublishSummary } from '../types';
 import type { ApiClient, AskEvent, AskRequest, UploadOptions } from '../api/client';
 
 // ---- Datos de ejemplo ------------------------------------------------------------------------------------------------------------------
@@ -288,7 +288,47 @@ export class MockApi implements ApiClient {
     if (next) this.run(next);
   }
 
-  deleteBook(slug: string): Promise<void> {
+  /** Publicar en producción (simulado): la vista previa calcula con los datos del libro y no escribe nada; publicar marca el libro como publicado. */
+  async previewPublish(slug: string): Promise<{ jobId: string }> {
+    return this.startPublish(slug, true);
+  }
+
+  async publishBook(slug: string): Promise<{ jobId: string }> {
+    return this.startPublish(slug, false);
+  }
+
+  unpublishBook(slug: string): Promise<void> {
+    const book = this.books.find((candidate) => candidate.slug === slug);
+    if (!book) return Promise.reject(new Error('No existe ese libro.'));
+    if (this.busy(slug)) return Promise.reject(new Error('Este libro se está procesando ahora mismo. Espera a que termine.'));
+    delete book.published;
+    this.emit();
+    return Promise.resolve();
+  }
+
+  private startPublish(slug: string, dryRun: boolean): Promise<{ jobId: string }> {
+    const book = this.books.find((candidate) => candidate.slug === slug);
+    if (!book) return Promise.reject(new Error('No existe ese libro.'));
+    if (book.analysis !== 'done') return Promise.reject(new Error('El libro no está analizado: no hay nada que publicar.'));
+    if (this.busy(slug)) return Promise.reject(new Error('Este libro se está procesando ahora mismo. Espera a que termine.'));
+    const job: Job = {
+      jobId: randomId(), kind: 'publish', slug, title: book.title, filename: book.filename, status: 'RUNNING', phase: dryRun ? 'Comprobando lo que se publicaría' : 'Publicando en producción', progress: null,
+      dryRun, createdAt: new Date().toISOString(),
+    };
+    this.jobs = [job, ...this.jobs];
+    this.emit();
+    setTimeout(() => {
+      const chunks = book.stats?.chunks ?? 0;
+      const hitos = book.stats?.hitos ?? 0;
+      const publish: PublishSummary = { chunks, chunksReplaced: 0, hitos, hitosReplaced: 0, duplicates: [], duplicateCount: 0, before: { chunks: book.published?.chunks ?? 0, hitos: book.published?.hitos ?? 0 } };
+      if (!dryRun) book.published = { at: new Date().toISOString(), chunks, hitos };
+      this.jobs = this.jobs.map((candidate) => (candidate.jobId === job.jobId ? { ...candidate, status: 'DONE', phase: 'Terminado', progress: 1, publish, finishedAt: new Date().toISOString() } : candidate));
+      this.emit();
+    }, this.stepMs);
+    return Promise.resolve({ jobId: job.jobId });
+  }
+
+  deleteBook(slug: string, _options?: { unpublish?: boolean }): Promise<void> {
     const running = this.jobs.find((job) => job.slug === slug && (job.status === 'RUNNING' || job.status === 'UPLOADING'));
     if (running) return Promise.reject(new Error('El libro se está analizando o subiendo. Espera a que termine para borrarlo.'));
     if (!this.books.some((book) => book.slug === slug)) return Promise.reject(new Error('No existe ese libro.'));

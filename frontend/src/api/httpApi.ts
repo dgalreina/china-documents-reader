@@ -1,6 +1,6 @@
 import { isValidSlug, validatePdf } from '../lib/files';
 import { readNdjson } from '../lib/ndjson';
-import type { Book, BookOcr, BookStats, Hito, Job, JobKind, JobStatus, OcrEngine, PageTranslation, Personaje, PersonajeRef } from '../types';
+import type { Book, BookOcr, BookPublished, BookStats, Hito, Job, JobKind, JobStatus, OcrEngine, PageTranslation, Personaje, PersonajeRef, PublishSummary } from '../types';
 import type { ApiClient, ApiFeatures, AskEvent, AskRequest, UploadOptions } from './client';
 import { uploadToS3, type PresignedPost, type UploadFn } from './s3Upload';
 
@@ -38,6 +38,7 @@ interface ServerBook {
   ocr?: { engine?: string; pages?: number; pagesWithText?: number; at?: string } | null;
   stats?: ServerStats;
   coverUrl?: string | null;
+  published?: { at?: string; chunks?: number; hitos?: number } | null;
 }
 
 interface ServerJob {
@@ -55,8 +56,16 @@ interface ServerJob {
   createdAt?: string;
   finishedAt?: string;
   error?: string;
-  /** El resumen que escribe Finalize al terminar (ver backend/lambdas/write_mongo/handler.py). */
+  /** true = vista previa de publicación. */
+  dryRun?: boolean;
+  /** El resumen que escribe Finalize al terminar (ver backend/lambdas/write_mongo/handler.py) o, en una publicación, el de backend/lambdas/publish. */
   summary?: {
+    hitos?: number;
+    hitosReemplazados?: number;
+    chunksReemplazados?: number;
+    hitosDuplicados?: number;
+    duplicados?: { titulo?: string; año?: number; titulo_existente?: string; fuente_existente?: string }[];
+    publicadoAntes?: { chunks?: number; hitos?: number };
     chunks?: number;
     chunksListos?: number;
     hitosEscritos?: number;
@@ -120,6 +129,23 @@ function mapOcr(ocr: ServerBook['ocr']): BookOcr | undefined {
   return { engine: ocr.engine === 'openai' ? 'openai' : 'textract', pages: num(ocr.pages), pagesWithText: ocr.pagesWithText === undefined ? undefined : num(ocr.pagesWithText), at: ocr.at };
 }
 
+function mapPublished(published: ServerBook['published']): BookPublished | undefined {
+  if (!published || typeof published.at !== 'string') return undefined;
+  return { at: published.at, chunks: num(published.chunks), hitos: num(published.hitos) };
+}
+
+function mapPublishSummary(summary: NonNullable<ServerJob['summary']>): PublishSummary {
+  return {
+    chunks: num(summary.chunks),
+    chunksReplaced: num(summary.chunksReemplazados),
+    hitos: num(summary.hitos),
+    hitosReplaced: num(summary.hitosReemplazados),
+    duplicateCount: num(summary.hitosDuplicados),
+    duplicates: (summary.duplicados ?? []).map((d) => ({ titulo: d.titulo ?? '', año: num(d.año), existente: d.titulo_existente, fuente: d.fuente_existente })),
+    before: { chunks: num(summary.publicadoAntes?.chunks), hitos: num(summary.publicadoAntes?.hitos) },
+  };
+}
+
 export function mapBook(book: ServerBook): Book {
   const stats = book.stats;
   return {
@@ -133,6 +159,7 @@ export function mapBook(book: ServerBook): Book {
     coverUrl: book.coverUrl || undefined,
     textLayer: typeof book.textLayer === 'boolean' ? book.textLayer : undefined,
     ocr: mapOcr(book.ocr),
+    published: mapPublished(book.published),
     stats: stats && {
       chunks: num(stats.chunks),
       chunksListos: num(stats.chunksListos),
@@ -234,8 +261,9 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
   }
   if (status === 'NEEDS_OCR') error = 'Este PDF es un escaneado (sin texto): primero reconoce su texto con OCR (botón «Reconocer texto» en Archivos) y luego analízalo.';
 
-  const kind: JobKind = job.kind === 'upload' ? 'upload' : job.kind === 'ocr' ? 'ocr' : 'analysis';
+  const kind: JobKind = job.kind === 'upload' ? 'upload' : job.kind === 'ocr' ? 'ocr' : job.kind === 'publish' ? 'publish' : 'analysis';
   if (kind === 'ocr' && status === 'RUNNING') phase = 'Reconociendo el texto (OCR)';
+  if (kind === 'publish' && status === 'RUNNING') phase = job.dryRun ? 'Comprobando lo que se publicaría' : 'Publicando en producción';
   if (status === 'RUNNING') {
     // Lo que dice el propio flujo manda sobre el texto genérico: la fase real y, si la hay, su avance (si no, la barra de "trabajando").
     if (typeof job.phase === 'string' && job.phase.trim()) phase = job.phase;
@@ -253,7 +281,9 @@ export function mapJob(job: ServerJob, now: number, local?: LocalUpload): Job {
     detail,
     progress,
     error: cleanJobError(error),
-    stats: summaryStats(job.summary),
+    stats: kind === 'publish' ? undefined : summaryStats(job.summary),
+    dryRun: kind === 'publish' ? Boolean(job.dryRun) : undefined,
+    publish: kind === 'publish' && job.summary ? mapPublishSummary(job.summary) : undefined,
     createdAt: job.createdAt ?? '',
     finishedAt: job.finishedAt,
   };
@@ -410,10 +440,30 @@ export class HttpApi implements ApiClient {
     return { jobId: result.jobId };
   }
 
-  async deleteBook(slug: string): Promise<void> {
-    await this.request(`/books/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  async deleteBook(slug: string, options?: { unpublish?: boolean }): Promise<void> {
+    await this.request(`/books/${encodeURIComponent(slug)}${options?.unpublish ? '?unpublish=1' : ''}`, { method: 'DELETE' });
     this.pdfUrls.delete(slug);
     this.notify(); // la lista se refresca sin el libro
+  }
+
+  private async startPublish(slug: string, dryRun: boolean): Promise<{ jobId: string }> {
+    const result = await this.request<{ jobId: string }>(`/books/${encodeURIComponent(slug)}/publish`, { method: 'POST', body: JSON.stringify({ dryRun }) });
+    this.active = true; // hay un trabajo en marcha: a partir de ahora se pregunta por su avance
+    this.notify();
+    return { jobId: result.jobId };
+  }
+
+  previewPublish(slug: string): Promise<{ jobId: string }> {
+    return this.startPublish(slug, true);
+  }
+
+  publishBook(slug: string): Promise<{ jobId: string }> {
+    return this.startPublish(slug, false);
+  }
+
+  async unpublishBook(slug: string): Promise<void> {
+    await this.request(`/books/${encodeURIComponent(slug)}/publish`, { method: 'DELETE' });
+    this.notify(); // el libro vuelve a la lista sin la marca de publicado
   }
 
   async ask(request: AskRequest, onEvent: (event: AskEvent) => void, signal?: AbortSignal): Promise<void> {

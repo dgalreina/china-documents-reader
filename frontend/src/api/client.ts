@@ -68,8 +68,12 @@ export interface ApiClient {
   startOcr(slug: string, engine: OcrEngine): Promise<{ jobId: string; estimatedCostUsd: number }>;
   /** El texto OCR del libro, una cadena por página (índice 0 = página 1). `stamp` cambia cuando se repite el OCR. null si el libro no tiene OCR. */
   getOcrPages(slug: string, stamp?: string): Promise<string[] | null>;
-  /** Borra el libro y TODO lo que es solo suyo (PDF, portada, traducciones, hitos, personajes, análisis). Rechaza con un mensaje en español, p. ej. si aún se está analizando. */
-  deleteBook(slug: string): Promise<void>;
+  /** Borra el libro y TODO lo que es solo suyo (PDF, portada, traducciones, hitos, personajes, análisis). Con `unpublish`, también quita su copia de producción. Rechaza con un mensaje en español, p. ej. si aún se está analizando. */
+  deleteBook(slug: string, options?: { unpublish?: boolean }): Promise<void>;
+  /** Publicación en producción. `previewPublish` NO escribe nada: calcula lo que pasaría (llega como un trabajo con `publish`). `publishBook` publica de verdad. `unpublishBook` quita el libro de producción. Rechazan con un mensaje en español. */
+  previewPublish(slug: string): Promise<{ jobId: string }>;
+  publishBook(slug: string): Promise<{ jobId: string }>;
+  unpublishBook(slug: string): Promise<void>;
   /** Avisa cuando cambian libros o trabajos (progreso, cola...). Devuelve la función para dejar de escuchar. */
   subscribe(listener: () => void): () => void;
 }
