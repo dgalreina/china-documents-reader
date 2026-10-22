@@ -17,3 +17,4 @@ infra/dist/
 
 # configuración de la web para desarrollar contra el stack real (la escribe infra/scripts/write-front-config.mjs)
 frontend/public/config.json
+frontend/tsconfig.tsbuildinfo

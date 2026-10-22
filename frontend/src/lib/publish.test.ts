@@ -16,11 +16,11 @@ describe('publishState', () => {
 
   it('un trabajo de publicación en marcha manda, y dice si es la vista previa', () => {
     expect(publishState(book(), [job('RUNNING', { dryRun: true })])).toEqual({ status: 'running', preview: true });
-    expect(publishState(book({ published: { at: '2026-06-02', chunks: 1, hitos: 1 } }), [job('RUNNING', { dryRun: false })])).toEqual({ status: 'running', preview: false });
+    expect(publishState(book({ published: { at: '2026-06-02', chunks: 1, hitos: 1, personajes: 0 } }), [job('RUNNING', { dryRun: false })])).toEqual({ status: 'running', preview: false });
   });
 
   it('publicado y sin cambios desde entonces está "published"; si el libro cambió después, "outdated"', () => {
-    const published = { at: '2026-06-02T00:00:00Z', chunks: 10, hitos: 2 };
+    const published = { at: '2026-06-02T00:00:00Z', chunks: 10, hitos: 2, personajes: 1 };
     expect(publishState(book({ published, updatedAt: '2026-06-01T00:00:00Z' }), []).status).toBe('published');
     expect(publishState(book({ published, updatedAt: '2026-06-03T00:00:00Z' }), []).status).toBe('outdated');
   });
@@ -36,7 +36,7 @@ describe('mapJob de una publicación', () => {
     const mapped = mapJob(
       {
         jobId: 'j', status: 'DONE', source: 'a', kind: 'publish', dryRun: true,
-        summary: { chunks: 10, chunksReemplazados: 2, hitos: 4, hitosReemplazados: 1, hitosDuplicados: 1, duplicados: [{ titulo: 'Batalla', año: -260, titulo_existente: 'Battle', fuente_existente: 'china-history' }], publicadoAntes: { chunks: 8, hitos: 3 } },
+        summary: { chunks: 10, chunksReemplazados: 2, hitos: 4, hitosReemplazados: 1, hitosDuplicados: 1, personajesPublicados: 5, duplicados: [{ titulo: 'Batalla', año: -260, titulo_existente: 'Battle', fuente_existente: 'china-history' }], publicadoAntes: { chunks: 8, hitos: 3, personajes: 2 } },
       },
       0,
     );
@@ -44,8 +44,8 @@ describe('mapJob de una publicación', () => {
     expect(mapped.dryRun).toBe(true);
     expect(mapped.stats).toBeUndefined();
     expect(mapped.publish).toEqual({
-      chunks: 10, chunksReplaced: 2, hitos: 4, hitosReplaced: 1, duplicateCount: 1,
-      duplicates: [{ titulo: 'Batalla', año: -260, existente: 'Battle', fuente: 'china-history' }], before: { chunks: 8, hitos: 3 },
+      chunks: 10, chunksReplaced: 2, hitos: 4, hitosReplaced: 1, personajes: 5, duplicateCount: 1,
+      duplicates: [{ titulo: 'Batalla', año: -260, existente: 'Battle', fuente: 'china-history' }], before: { chunks: 8, hitos: 3, personajes: 2 },
     });
   });
 

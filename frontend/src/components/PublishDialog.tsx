@@ -19,7 +19,7 @@ const MAX_DUPLICATES_LISTED = 8;
 /**
  * Publicar un libro en producción, en dos tiempos: al abrirse pide una VISTA PREVIA (no escribe nada) y enseña lo que pasaría —cuántos fragmentos y hitos, cuántos hitos se
  * descartan por estar ya en producción, si reemplaza una publicación anterior—; solo entonces se puede confirmar. Producción es la base que lee china-history: por eso se
- * enseña antes, y publicar de nuevo reemplaza la copia anterior de este libro (nunca toca nada que no sea suyo). Los personajes no se publican todavía.
+ * enseña antes, y publicar de nuevo reemplaza la copia anterior de este libro (nunca toca nada que no sea suyo).
  */
 export function PublishDialog({ book, jobs, onPreview, onPublish, onUnpublish, onClose }: PublishDialogProps) {
   const [jobId, setJobId] = useState<string | null>(null);
@@ -66,7 +66,7 @@ export function PublishDialog({ book, jobs, onPreview, onPublish, onUnpublish, o
       onCancel={onClose}
     >
       <p>
-        Producción es la base de datos que lee <span className="font-semibold text-ink">china-history</span>. Esto copia allí los fragmentos y los hitos de este libro (los personajes todavía no).
+        Producción es la base de datos que lee <span className="font-semibold text-ink">china-history</span>. Esto copia allí los fragmentos, los hitos y los personajes de este libro (china-history aún no lee los personajes: se publican para que pueda ir preparándolo).
       </p>
       {waiting && <p className="text-stone">Comprobando lo que se publicaría… (no se escribe nada todavía)</p>}
       {summary && (
@@ -80,10 +80,13 @@ export function PublishDialog({ book, jobs, onPreview, onPublish, onUnpublish, o
               <span className="font-semibold">{summary.hitos}</span> hitos nuevos
               {summary.duplicateCount > 0 && <> · {summary.duplicateCount} descartados por estar ya en producción</>}
             </li>
+            <li>
+              <span className="font-semibold">{summary.personajes}</span> personajes
+            </li>
           </ul>
           {summary.before.chunks > 0 && (
             <p className="mt-1.5 text-xs text-stone">
-              Ya hay publicados {summary.before.chunks} fragmentos y {summary.before.hitos} hitos de este libro: se reemplazarán por los de ahora.
+              Ya hay publicados {summary.before.chunks} fragmentos, {summary.before.hitos} hitos y {summary.before.personajes} personajes de este libro: se reemplazarán por los de ahora.
             </p>
           )}
           {summary.duplicates.length > 0 && (

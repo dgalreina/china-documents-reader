@@ -38,6 +38,7 @@ export interface BookPublished {
   at: string;
   chunks: number;
   hitos: number;
+  personajes: number;
 }
 
 export type OcrEngine = 'textract' | 'openai';
@@ -86,11 +87,13 @@ export interface PublishSummary {
   chunksReplaced: number;
   hitos: number;
   hitosReplaced: number;
+  /** Fichas de personajes que se publican (solo las que enlazan los hitos publicados). */
+  personajes: number;
   /** Hitos que ya existían en producción (con otras palabras) y por eso no se publican. */
   duplicates: PublishDuplicate[];
   duplicateCount: number;
   /** Lo que ya había publicado de este libro antes. */
-  before: { chunks: number; hitos: number };
+  before: { chunks: number; hitos: number; personajes: number };
 }
 
 export interface PublishDuplicate {

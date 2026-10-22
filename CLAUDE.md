@@ -230,6 +230,8 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   **CI/CD (hecho):** `.github/workflows/ci.yml` (tests en cada push; push a `main` -> `cdk diff` clasificado -> despliegue automatico, o con aprobacion humana si el cambio es delicado: IAM,
   borrados, sustituciones). OIDC sin claves: rol `china-documents-github-deploy` (`ChinaDocumentsCiStack`, `infra/lib/ci-stack.ts`), variable `AWS_ROLE_ARN`, environments `despliegue` y `aprobacion`.
   `npm run deploy` local sigue valiendo. Ver `infra/README.md`.
+  **Decidido con el usuario (22-oct-2026):** el entorno `aprobacion` NO tiene revisores obligatorios a propósito (aprobar desde el móvil era un engorro): un cambio 'delicado' sigue clasificándose y
+  quedando registrado en `aprobacion`, pero se despliega solo. Si algún día se quiere el freno: Settings -> Environments -> `aprobacion` -> Required reviewers.
 
   **Agente con streaming (hecho, probado en local con servicios reales, sin desplegar):** `backend/ask/` es la UNICA Lambda en Node.js (Python no tiene streaming nativo en Lambda y el HTTP API de
   API Gateway no lo permite): Function URL en modo `RESPONSE_STREAM`, publica, y la propia funcion valida el token de Cognito (`aws-jwt-verify`, id token del user pool y cliente web) ANTES de escribir nada.
@@ -282,12 +284,12 @@ rey Wu se une a su ficha, "dado el personaje sus hitos" y la mencion convertida 
   después / 'En producción' para gestionarlo). Flujo: `POST /books/{slug}/publish` con `{dryRun}` OBLIGATORIO y booleano (nunca escribe por omisión) -> Lambda `publish` apunta un trabajo `kind: publish` y lanza `PublishRunFn`
   de forma asíncrona (API Gateway corta a 29 s) -> el resumen queda en el trabajo y la web (`PublishDialog`) lo enseña: SIEMPRE vista previa primero (fragmentos, hitos nuevos, duplicados descartados, si reemplaza una
   publicación anterior) y solo entonces se puede confirmar. Reutiliza `write_chunks`/`write_hitos` con el destino prod: mismo contrato, mismo upsert, misma deduplicación contra lo que ya hay en producción (los 1259
-  de china-history incluidos). Solo `book_chunks` y `hitos_conocidos`, solo documentos con nuestro `origen`; los hitos van SIN `personajes` (china-history aún no tiene fichas) y sin `_id` de dev. Publicar de nuevo
-  reemplaza (jobId nuevo + `cleanup_old_runs`). `DELETE /books/{slug}/publish` despublica; `DELETE /books/{slug}?unpublish=1` borra el libro y además su copia de producción (casilla en el diálogo de borrado).
+  de china-history incluidos). Solo `book_chunks`, `hitos_conocidos` y `personajes`, solo documentos con nuestro `origen`, sin `_id` de dev. **Los personajes SÍ se publican (decidido con el usuario 22-oct-2026) aunque china-history aún
+  no los lea, para que su agente vaya preparándolo**: solo las fichas que enlazan los hitos que se publican (un hito descartado por duplicado no arrastra las suyas); los hitos conservan sus enlaces; orden chunks -> fichas -> hitos
+  (ningún enlace colgando); una ficha ya publicada por otro libro suma la fuente; al republicar se podan las fichas que el libro ya no usa. Publicar de nuevo reemplaza (jobId nuevo + `cleanup_old_runs`). `DELETE /books/{slug}/publish` despublica (misma rutina `purge_mongo` que el borrado de un libro: las fichas que otro libro aún usa se conservan); `DELETE /books/{slug}?unpublish=1` borra el libro y además su copia de producción (casilla en el diálogo de borrado).
   Destino: `prod_target()` usa `MONGODB_URI_PROD` y, si no existe, la URI de dev (mismo usuario de Atlas, que ya llega a las dos bases); lo que decide DÓNDE se escribe es el nombre de la base (`MONGODB_DB_PROD`,
   por defecto `china-history`), que nunca puede coincidir con la de dev. Un `source` ocupado en producción por chunks SIN nuestra marca se rechaza antes de escribir. Catálogo: `published {at, chunks, hitos, jobId}`.
-  Vista previa real (solo lectura) del Records: 968 fragmentos, 26 hitos (1 descartado como duplicado de otro hito del mismo libro), nada previo publicado, coste ≈ $0,011. Pendiente: personajes en producción
-  (cuando china-history los lea), publicación automática al terminar el análisis (hoy solo botón) y `fuentesAdicionales` para hitos deduplicados.
+  Vista previa real (solo lectura) del Records: 968 fragmentos, 26 hitos (1 descartado como duplicado de otro hito del mismo libro), 16 personajes, nada previo publicado, coste ≈ $0,011. Pendiente: publicación automática al terminar el análisis (hoy solo botón) y `fuentesAdicionales` para hitos deduplicados.
 
 ## Ideas apuntadas (sin implementar)
 

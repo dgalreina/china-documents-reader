@@ -154,7 +154,7 @@ def run_handler(event: dict, _context=None, jobs_table=None, books_table=None, d
             Key={"slug": slug},
             UpdateExpression="SET published = :p",
             ConditionExpression="attribute_exists(slug)",
-            ExpressionAttributeValues={":p": {"at": _now(), "chunks": report.chunks, "hitos": report.hitos, "jobId": job_id}},
+            ExpressionAttributeValues={":p": {"at": _now(), "chunks": report.chunks, "hitos": report.hitos, "personajes": report.personajes, "jobId": job_id}},
         )
     _finish(jobs_table, job_id, summary=summary)
     return {"ok": True}

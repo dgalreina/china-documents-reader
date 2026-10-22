@@ -125,7 +125,7 @@ export function FilesTab({ books, jobs, currentSlug, onSelect, onUpload, onAnaly
                       {book.pageCount > 0 ? `${book.pageCount} págs.` : 'sin datos de páginas'}
                       {analysis.status === 'done' && book.stats && book.stats.hitos > 0 ? ` · ${book.stats.hitos} hitos · ${book.stats.personajes} personajes` : ''}
                     </div>
-                    {publication.status === 'published' && <p className="mt-1 text-xs text-stone">En producción: {book.published?.chunks} fragmentos · {book.published?.hitos} hitos.</p>}
+                    {publication.status === 'published' && <p className="mt-1 text-xs text-stone">En producción: {book.published?.chunks} fragmentos · {book.published?.hitos} hitos · {book.published?.personajes} personajes.</p>}
                     {publication.status === 'outdated' && <p className="mt-1 text-xs text-amber-800">Publicado en producción, pero el libro ha cambiado desde entonces.</p>}
                     {book.ocr && <p className="mt-1 text-xs text-stone">Texto reconocido con {OCR_ENGINE_NAME[book.ocr.engine]}.</p>}
                     {scanned && ocr.status !== 'running' && <p className="mt-1 text-xs text-stone">Es un escaneado: sin OCR no se puede traducir ni analizar.</p>}

@@ -38,7 +38,7 @@ interface ServerBook {
   ocr?: { engine?: string; pages?: number; pagesWithText?: number; at?: string } | null;
   stats?: ServerStats;
   coverUrl?: string | null;
-  published?: { at?: string; chunks?: number; hitos?: number } | null;
+  published?: { at?: string; chunks?: number; hitos?: number; personajes?: number } | null;
 }
 
 interface ServerJob {
@@ -62,10 +62,11 @@ interface ServerJob {
   summary?: {
     hitos?: number;
     hitosReemplazados?: number;
+    personajesPublicados?: number;
     chunksReemplazados?: number;
     hitosDuplicados?: number;
     duplicados?: { titulo?: string; año?: number; titulo_existente?: string; fuente_existente?: string }[];
-    publicadoAntes?: { chunks?: number; hitos?: number };
+    publicadoAntes?: { chunks?: number; hitos?: number; personajes?: number };
     chunks?: number;
     chunksListos?: number;
     hitosEscritos?: number;
@@ -131,7 +132,7 @@ function mapOcr(ocr: ServerBook['ocr']): BookOcr | undefined {
 
 function mapPublished(published: ServerBook['published']): BookPublished | undefined {
   if (!published || typeof published.at !== 'string') return undefined;
-  return { at: published.at, chunks: num(published.chunks), hitos: num(published.hitos) };
+  return { at: published.at, chunks: num(published.chunks), hitos: num(published.hitos), personajes: num(published.personajes) };
 }
 
 function mapPublishSummary(summary: NonNullable<ServerJob['summary']>): PublishSummary {
@@ -140,9 +141,10 @@ function mapPublishSummary(summary: NonNullable<ServerJob['summary']>): PublishS
     chunksReplaced: num(summary.chunksReemplazados),
     hitos: num(summary.hitos),
     hitosReplaced: num(summary.hitosReemplazados),
+    personajes: num(summary.personajesPublicados),
     duplicateCount: num(summary.hitosDuplicados),
     duplicates: (summary.duplicados ?? []).map((d) => ({ titulo: d.titulo ?? '', año: num(d.año), existente: d.titulo_existente, fuente: d.fuente_existente })),
-    before: { chunks: num(summary.publicadoAntes?.chunks), hitos: num(summary.publicadoAntes?.hitos) },
+    before: { chunks: num(summary.publicadoAntes?.chunks), hitos: num(summary.publicadoAntes?.hitos), personajes: num(summary.publicadoAntes?.personajes) },
   };
 }
 

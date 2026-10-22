@@ -320,8 +320,8 @@ export class MockApi implements ApiClient {
     setTimeout(() => {
       const chunks = book.stats?.chunks ?? 0;
       const hitos = book.stats?.hitos ?? 0;
-      const publish: PublishSummary = { chunks, chunksReplaced: 0, hitos, hitosReplaced: 0, duplicates: [], duplicateCount: 0, before: { chunks: book.published?.chunks ?? 0, hitos: book.published?.hitos ?? 0 } };
-      if (!dryRun) book.published = { at: new Date().toISOString(), chunks, hitos };
+      const publish: PublishSummary = { chunks, chunksReplaced: 0, hitos, hitosReplaced: 0, personajes: book.stats?.personajes ?? 0, duplicates: [], duplicateCount: 0, before: { chunks: book.published?.chunks ?? 0, hitos: book.published?.hitos ?? 0, personajes: book.published?.personajes ?? 0 } };
+      if (!dryRun) book.published = { at: new Date().toISOString(), chunks, hitos, personajes: publish.personajes };
       this.jobs = this.jobs.map((candidate) => (candidate.jobId === job.jobId ? { ...candidate, status: 'DONE', phase: 'Terminado', progress: 1, publish, finishedAt: new Date().toISOString() } : candidate));
       this.emit();
     }, this.stepMs);
